@@ -448,7 +448,7 @@ HTML_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>EC2 Manager</title>
+    <title>Instance Manager</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -910,7 +910,7 @@ HTML_TEMPLATE = """
     <nav class="navbar navbar-expand-lg navbar-dark mb-4">
         <div class="container">
             <a class="navbar-brand" href="/">
-                <i class="fas fa-cloud me-2"></i> EC2 Manager Dashboard
+                <i class="fas fa-cloud me-2"></i> Instance Dashboard
             </a>
             <div class="d-flex align-items-center">
                 <div id="auto-refresh-container" class="form-check form-switch me-3">
