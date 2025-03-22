@@ -1,9 +1,14 @@
 import os
 import time
-from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
-from controller import EC2Manager
+import datetime
+import pytz
 import threading
 import traceback
+import json
+from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
+from controller import EC2Manager
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -11,9 +16,124 @@ app.secret_key = os.urandom(24)
 # Store instances in memory - in a real app, you'd use a database
 instances = {}
 operations_log = []
+schedules = {}
 
 # Background task handling
 active_tasks = {}
+
+# Initialize scheduler
+scheduler = BackgroundScheduler(timezone=pytz.timezone('America/New_York'))
+scheduler.start()
+
+def scheduled_start_instance(instance_id):
+    """Function to start an instance on schedule"""
+    operations_log.append(f"SCHEDULED: Starting instance {instance_id} based on schedule")
+    try:
+        manager = EC2Manager(instance_id=instance_id)
+        manager.start()
+        instances[instance_id]["status"] = "running"
+        manager.launch()
+        instances[instance_id]["url"] = manager.instance_url
+        operations_log.append(f"SCHEDULED: Instance {instance_id} started and launched successfully")
+    except Exception as e:
+        operations_log.append(f"SCHEDULED ERROR: Failed to start instance {instance_id}: {str(e)}")
+
+def scheduled_stop_instance(instance_id):
+    """Function to stop an instance on schedule"""
+    operations_log.append(f"SCHEDULED: Stopping instance {instance_id} based on schedule")
+    try:
+        manager = EC2Manager(instance_id=instance_id)
+        manager.stop()
+        instances[instance_id]["status"] = "stopped"
+        instances[instance_id]["url"] = None
+        operations_log.append(f"SCHEDULED: Instance {instance_id} stopped successfully")
+    except Exception as e:
+        operations_log.append(f"SCHEDULED ERROR: Failed to stop instance {instance_id}: {str(e)}")
+
+def add_daily_schedule(instance_id, start_time, duration_minutes):
+    """Add a daily schedule for an instance"""
+    global schedules
+    
+    # Parse the start time (format: HH:MM)
+    start_hour, start_minute = map(int, start_time.split(':'))
+    
+    # Calculate end time based on duration
+    end_hour = start_hour + (duration_minutes // 60)
+    end_minute = start_minute + (duration_minutes % 60)
+    
+    # Handle minute overflow
+    if end_minute >= 60:
+        end_hour += 1
+        end_minute -= 60
+    
+    # Handle hour overflow
+    end_hour = end_hour % 24
+    
+    # Format times for display
+    end_time = f"{end_hour:02d}:{end_minute:02d}"
+    
+    # Add schedule to our schedules dict
+    if instance_id not in schedules:
+        schedules[instance_id] = {"start": start_time, "end": end_time, "duration": duration_minutes}
+    else:
+        # Update existing schedule
+        schedules[instance_id]["start"] = start_time
+        schedules[instance_id]["end"] = end_time
+        schedules[instance_id]["duration"] = duration_minutes
+    
+    # Remove any existing jobs for this instance
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
+            scheduler.remove_job(job.id)
+    
+    # Add start job
+    start_job_id = f"start_{instance_id}_{int(time.time())}"
+    scheduler.add_job(
+        scheduled_start_instance,
+        CronTrigger(hour=start_hour, minute=start_minute),
+        args=[instance_id],
+        id=start_job_id,
+        replace_existing=True
+    )
+    
+    # Add stop job
+    stop_job_id = f"stop_{instance_id}_{int(time.time())}"
+    scheduler.add_job(
+        scheduled_stop_instance,
+        CronTrigger(hour=end_hour, minute=end_minute),
+        args=[instance_id],
+        id=stop_job_id,
+        replace_existing=True
+    )
+    
+    operations_log.append(f"Schedule added for instance {instance_id}: ON at {start_time}, OFF at {end_time} (duration: {duration_minutes} minutes)")
+    
+    # Add schedule info to instance data
+    if instance_id in instances:
+        instances[instance_id]["schedule"] = {
+            "start": start_time,
+            "end": end_time,
+            "duration": duration_minutes
+        }
+
+def remove_schedule(instance_id):
+    """Remove schedule for an instance"""
+    global schedules
+    
+    # Remove any existing jobs for this instance
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
+            scheduler.remove_job(job.id)
+    
+    # Remove from schedules dict
+    if instance_id in schedules:
+        del schedules[instance_id]
+    
+    # Remove schedule info from instance data
+    if instance_id in instances and "schedule" in instances[instance_id]:
+        del instances[instance_id]["schedule"]
+    
+    operations_log.append(f"Schedule removed for instance {instance_id}")
 
 def background_task(task_id, operation, instance_id=None):
     global active_tasks, instances, operations_log
@@ -77,10 +197,27 @@ def background_task(task_id, operation, instance_id=None):
 
 @app.route('/')
 def index():
+    # Get all active schedules
+    active_schedules = {}
+    for job in scheduler.get_jobs():
+        if job.id.startswith("start_") or job.id.startswith("stop_"):
+            job_parts = job.id.split('_')
+            if len(job_parts) > 1:
+                instance_id = job_parts[1]
+                if instance_id not in active_schedules:
+                    active_schedules[instance_id] = []
+                active_schedules[instance_id].append({
+                    "job_id": job.id,
+                    "next_run": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if job.next_run_time else "N/A",
+                    "type": job_parts[0]
+                })
+    
     return render_template_string(HTML_TEMPLATE, 
                                   instances=instances, 
                                   operations_log=operations_log,
-                                  active_tasks=active_tasks)
+                                  active_tasks=active_tasks,
+                                  schedules=schedules,
+                                  active_schedules=active_schedules)
 
 @app.route('/create', methods=['POST'])
 def create_instance():
@@ -154,6 +291,10 @@ def add_existing_instance():
             "url": manager.instance_url if hasattr(manager, 'instance_url') and manager.instance_url else None
         }
         
+        # Check if this instance has a schedule
+        if instance_id in schedules:
+            instances[instance_id]["schedule"] = schedules[instance_id]
+        
         flash(f"Instance {instance_id} added successfully")
         operations_log.append(f"Added existing instance {instance_id}")
     except Exception as e:
@@ -162,30 +303,73 @@ def add_existing_instance():
     
     return redirect(url_for('index'))
 
+@app.route('/schedule/<instance_id>', methods=['POST'])
+def set_schedule(instance_id):
+    if instance_id not in instances:
+        flash(f"Instance {instance_id} not found")
+        return redirect(url_for('index'))
+    
+    start_time = request.form.get('start_time')
+    duration = request.form.get('duration')
+    
+    if not start_time or not duration:
+        flash("Please provide both start time and duration")
+        return redirect(url_for('index'))
+    
+    try:
+        duration_minutes = int(duration)
+        if duration_minutes <= 0:
+            raise ValueError("Duration must be positive")
+        
+        # Validate start_time format (HH:MM)
+        datetime.datetime.strptime(start_time, '%H:%M')
+        
+        add_daily_schedule(instance_id, start_time, duration_minutes)
+        flash(f"Schedule added for instance {instance_id}")
+    except ValueError as e:
+        flash(f"Invalid schedule parameters: {str(e)}")
+    
+    return redirect(url_for('index'))
+
+@app.route('/remove_schedule/<instance_id>', methods=['POST'])
+def remove_instance_schedule(instance_id):
+    if instance_id not in instances:
+        flash(f"Instance {instance_id} not found")
+        return redirect(url_for('index'))
+    
+    remove_schedule(instance_id)
+    flash(f"Schedule removed for instance {instance_id}")
+    return redirect(url_for('index'))
+
 @app.route('/status')
 def status():
     return jsonify({
         "instances": instances,
         "tasks": list(active_tasks.keys()),
-        "log_count": len(operations_log)
+        "log_count": len(operations_log),
+        "schedules": schedules
     })
-
-@app.route('/clear_logs', methods=['POST'])
-def clear_logs():
-    global operations_log
-    operations_log = []
-    flash("Operation logs cleared")
-    return redirect(url_for('index'))
 
 @app.route('/remove_instance/<instance_id>', methods=['POST'])
 def remove_instance(instance_id):
     if instance_id in instances:
+        # Remove any schedules for this instance
+        remove_schedule(instance_id)
+        
+        # Remove instance from dashboard
         del instances[instance_id]
         flash(f"Instance {instance_id} removed from dashboard")
         operations_log.append(f"Removed instance {instance_id} from dashboard")
     else:
         flash(f"Instance {instance_id} not found")
     
+    return redirect(url_for('index'))
+
+@app.route('/clear_logs', methods=['POST'])
+def clear_logs():
+    global operations_log
+    operations_log = []
+    flash("Operation logs cleared")
     return redirect(url_for('index'))
 
 # HTML Template with modern styling
@@ -311,6 +495,23 @@ HTML_TEMPLATE = """
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        .schedule-info {
+            background-color: rgba(52, 152, 219, 0.1);
+            border-left: 3px solid var(--primary);
+            padding: 5px 8px;
+            border-radius: 3px;
+            font-size: 0.85rem;
+        }
+        .schedule-badge {
+            background-color: #3498db;
+            color: white;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.75rem;
+        }
+        .time-picker {
+            max-width: 150px;
+        }
         .toast-container {
             position: fixed;
             bottom: 20px;
@@ -396,6 +597,41 @@ HTML_TEMPLATE = """
                         </div>
                     </div>
                 </div>
+                
+                <div class="card">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span><i class="fas fa-calendar-alt me-2"></i> Scheduled Tasks</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="schedules-container">
+                            {% if schedules %}
+                                <ul class="list-group">
+                                {% for instance_id, schedule in schedules.items() %}
+                                    <li class="list-group-item d-flex justify-content-between align-items-center">
+                                        <div>
+                                            <i class="fas fa-server me-2 text-primary"></i>
+                                            {{ instance_id[:8] }}...
+                                            <br>
+                                            <small class="text-muted">
+                                                ON: <span class="text-success">{{ schedule.start }}</span> | 
+                                                OFF: <span class="text-danger">{{ schedule.end }}</span>
+                                                ({{ schedule.duration }} mins)
+                                            </small>
+                                        </div>
+                                        <form action="/remove_schedule/{{ instance_id }}" method="post">
+                                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </form>
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                            {% else %}
+                                <p class="text-muted">No scheduled tasks</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="col-md-8">
@@ -425,6 +661,19 @@ HTML_TEMPLATE = """
                                                         <span class="text-muted">No URL available</span>
                                                     {% endif %}
                                                 </p>
+                                                {% if instance.schedule %}
+                                                <div class="schedule-info mb-2">
+                                                    <span class="badge bg-info">
+                                                        <i class="fas fa-clock me-1"></i> 
+                                                        On: {{ instance.schedule.start }} | Off: {{ instance.schedule.end }}
+                                                    </span>
+                                                    <form action="/remove_schedule/{{ instance_id }}" method="post" class="d-inline">
+                                                        <button type="submit" class="btn btn-sm btn-link text-danger p-0 ms-2">
+                                                            <i class="fas fa-times-circle"></i>
+                                                        </button>
+                                                    </form>
+                                                </div>
+                                                {% endif %}
                                                 <div class="btn-group w-100">
                                                     <form action="/start/{{ instance_id }}" method="post" class="me-2">
                                                         <button class="btn btn-sm btn-success" {% if instance.status == 'running' %}disabled{% endif %}>
@@ -442,6 +691,27 @@ HTML_TEMPLATE = """
                                                         </button>
                                                     </form>
                                                 </div>
+                                                
+                                                {% if not instance.schedule %}
+                                                <div class="mt-2">
+                                                    <button class="btn btn-sm btn-outline-info w-100" data-bs-toggle="collapse" data-bs-target="#schedule-form-{{ instance_id }}">
+                                                        <i class="fas fa-clock me-1"></i> Set Schedule
+                                                    </button>
+                                                    <div class="collapse mt-2" id="schedule-form-{{ instance_id }}">
+                                                        <form action="/schedule/{{ instance_id }}" method="post">
+                                                            <div class="mb-2">
+                                                                <label class="form-label small">Start Time (24h format)</label>
+                                                                <input type="time" class="form-control form-control-sm" name="start_time" required>
+                                                            </div>
+                                                            <div class="mb-2">
+                                                                <label class="form-label small">Duration (minutes)</label>
+                                                                <input type="number" class="form-control form-control-sm" name="duration" min="15" step="15" value="90" required>
+                                                            </div>
+                                                            <button type="submit" class="btn btn-sm btn-primary w-100">Save Schedule</button>
+                                                        </form>
+                                                    </div>
+                                                </div>
+                                                {% endif %}
                                             </div>
                                         </div>
                                     </div>
@@ -479,7 +749,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    <div class="toast-container"></div>
+    
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -501,8 +771,8 @@ HTML_TEMPLATE = """
                     // Update instance statuses
                     const instancesContainer = document.getElementById('instances-container');
                     // Only refresh the page if data changed significantly
-                    if (Object.keys(data.instances).length !== Object.keys({{ instances|tojson }}).length ||
-                        data.tasks.length !== Object.keys({{ active_tasks|tojson }}).length ||
+                    if (Object.keys(data.instances).length !== {{ instances|tojson|length }} ||
+                        data.tasks.length !== {{ active_tasks|tojson|length }} ||
                         data.log_count > lastLogCount) {
                         
                         window.location.reload();
@@ -517,11 +787,22 @@ HTML_TEMPLATE = """
         
         // Scroll to the bottom of the log container initially
         const logContainer = document.getElementById('log-container');
-        logContainer.scrollTop = logContainer.scrollHeight;
+        if (logContainer) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
     </script>
 </body>
 </html>
 """
+
+# Handle graceful shutdown
+import atexit
+
+@atexit.register
+def shutdown_scheduler():
+    if scheduler.running:
+        scheduler.shutdown()
+        print("Scheduler shut down successfully")
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
