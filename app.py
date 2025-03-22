@@ -453,139 +453,456 @@ HTML_TEMPLATE = """
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
-            --primary: #3498db;
-            --success: #2ecc71;
-            --danger: #e74c3c;
-            --warning: #f39c12;
-            --dark: #2c3e50;
-            --light: #ecf0f1;
+            --primary: #4F46E5;
+            --primary-dark: #4338CA;
+            --primary-light: #EEF2FF;
+            --secondary: #64748B;
+            --success: #10B981;
+            --info: #0EA5E9;
+            --warning: #F59E0B;
+            --danger: #EF4444;
+            --light: #F1F5F9;
+            --dark: #1E293B;
+            --surface: #FFFFFF;
+            --bg: #F8FAFC;
+            --border: #E2E8F0;
+            --text: #0F172A;
+            --text-secondary: #64748B;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            --transition: all 0.2s ease-in-out;
         }
+        
         body {
-            background-color: #f8f9fa;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--bg);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
             padding-bottom: 50px;
+            color: var(--text);
         }
+        
         .navbar {
-            background-color: var(--dark);
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            box-shadow: var(--shadow);
         }
+        
         .navbar-brand {
             font-weight: bold;
             color: white !important;
+            letter-spacing: -0.5px;
         }
+        
         .card {
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-            border: none;
+            border-radius: 16px;
+            box-shadow: var(--shadow);
+            margin-bottom: 24px;
+            border: 1px solid var(--border);
+            transition: var(--transition);
+            background-color: var(--surface);
         }
+        
+        .card:hover {
+            box-shadow: var(--shadow-lg);
+        }
+        
         .card-header {
-            background-color: var(--dark);
+            background: linear-gradient(135deg, var(--dark), #334155);
             color: white;
-            border-radius: 10px 10px 0 0 !important;
-            font-weight: bold;
+            border-radius: 16px 16px 0 0 !important;
+            font-weight: 600;
+            padding: 16px 20px;
+            border-bottom: none;
         }
+        
+        .card-header i {
+            margin-right: 8px;
+            color: var(--primary-light);
+        }
+        
+        .card-body {
+            padding: 20px;
+        }
+        
+        .btn {
+            border-radius: 10px;
+            font-weight: 500;
+            transition: var(--transition);
+            padding: 8px 16px;
+        }
+        
         .btn-primary {
-            background-color: var(--primary);
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            border-color: var(--primary-dark);
+        }
+        
+        .btn-primary:hover {
+            background: linear-gradient(135deg, #4338CA, #3730A3);
+            border-color: #3730A3;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, var(--success), #059669);
+            border-color: #059669;
+        }
+        
+        .btn-success:hover {
+            background: linear-gradient(135deg, #059669, #047857);
+            border-color: #047857;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger), #DC2626);
+            border-color: #DC2626;
+        }
+        
+        .btn-danger:hover {
+            background: linear-gradient(135deg, #DC2626, #B91C1C);
+            border-color: #B91C1C;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(239, 68, 68, 0.2);
+        }
+        
+        .btn-outline-primary {
+            color: var(--primary);
             border-color: var(--primary);
         }
-        .btn-success {
-            background-color: var(--success);
-            border-color: var(--success);
+        
+        .btn-outline-primary:hover {
+            background-color: var(--primary);
+            color: white;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.1);
         }
-        .btn-danger {
-            background-color: var(--danger);
-            border-color: var(--danger);
+        
+        .btn-outline-secondary {
+            color: var(--secondary);
+            border-color: var(--secondary);
         }
+        
+        .btn-outline-secondary:hover {
+            background-color: var(--secondary);
+            color: white;
+            transform: translateY(-1px);
+        }
+        
+        .btn-outline-info {
+            color: var(--info);
+            border-color: var(--info);
+        }
+        
+        .btn-outline-info:hover {
+            background-color: var(--info);
+            color: white;
+            transform: translateY(-1px);
+        }
+        
+        .btn-outline-light {
+            color: white;
+            border-color: rgba(255, 255, 255, 0.5);
+        }
+        
+        .btn-outline-light:hover {
+            background-color: rgba(255, 255, 255, 0.1);
+            color: white;
+            border-color: white;
+        }
+        
         .instance-card {
-            transition: all 0.3s ease;
+            transition: var(--transition);
+            border: 1px solid var(--border);
         }
+        
         .instance-card:hover {
             transform: translateY(-5px);
-            box-shadow: 0 6px 10px rgba(0, 0, 0, 0.15);
+            box-shadow: var(--shadow-lg);
         }
+        
+        .instance-card .card-body {
+            padding: 16px;
+        }
+        
         .status-indicator {
             display: inline-block;
             width: 12px;
             height: 12px;
             border-radius: 50%;
-            margin-right: 5px;
+            margin-right: 8px;
+            box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.8);
         }
+        
         .status-running, .status-available {
             background-color: var(--success);
         }
+        
         .status-stopped, .status-stopping {
             background-color: var(--danger);
         }
+        
         .status-starting, .status-pending, .status-created, .status-setup {
             background-color: var(--warning);
         }
+        
         .status-error {
-            background-color: #9b59b6;
+            background-color: #9333EA;
         }
+        
         .log-container {
-            background-color: #2c3e50;
-            color: #ecf0f1;
-            border-radius: 5px;
-            padding: 15px;
-            font-family: 'Courier New', Courier, monospace;
+            background-color: #0F172A;
+            color: #E2E8F0;
+            border-radius: 12px;
+            padding: 16px;
+            font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Courier New', monospace;
             max-height: 300px;
             overflow-y: auto;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
         }
+        
         .log-entry {
             margin: 0;
-            padding: 2px 0;
+            padding: 3px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
+        
+        .log-entry:last-child {
+            border-bottom: none;
+        }
+        
         .refresh-icon {
             cursor: pointer;
-            color: var(--primary);
+            color: white;
+            transition: var(--transition);
         }
+        
+        .refresh-icon:hover {
+            transform: rotate(180deg);
+        }
+        
         .url-link {
             color: var(--primary);
             text-decoration: none;
-            font-weight: bold;
+            font-weight: 500;
+            transition: var(--transition);
         }
+        
         .url-link:hover {
+            color: var(--primary-dark);
             text-decoration: underline;
         }
+        
         .flash-message {
-            border-radius: 5px;
-            margin-bottom: 15px;
+            border-radius: 12px;
+            margin-bottom: 20px;
+            background-color: #EFF6FF;
+            border-left: 4px solid var(--primary);
+            color: var(--primary-dark);
+            padding: 12px 16px;
+            box-shadow: var(--shadow);
         }
+        
         .loading-spinner {
             display: inline-block;
             width: 1rem;
             height: 1rem;
-            border: 0.2rem solid rgba(255,255,255,.3);
+            border: 0.2rem solid rgba(79, 70, 229, 0.2);
             border-radius: 50%;
-            border-top-color: #fff;
+            border-top-color: var(--primary);
             animation: spin 1s linear infinite;
             margin-right: 10px;
         }
+        
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+        
         .schedule-info {
-            background-color: rgba(52, 152, 219, 0.1);
+            background-color: var(--primary-light);
             border-left: 3px solid var(--primary);
-            padding: 5px 8px;
-            border-radius: 3px;
+            padding: 8px 12px;
+            border-radius: 8px;
             font-size: 0.85rem;
+            margin-bottom: 12px;
         }
+        
         .schedule-badge {
-            background-color: #3498db;
+            background: linear-gradient(135deg, var(--info), #0284C7);
             color: white;
-            padding: 2px 6px;
-            border-radius: 3px;
+            padding: 4px 8px;
+            border-radius: 6px;
             font-size: 0.75rem;
+            font-weight: 500;
+            display: inline-flex;
+            align-items: center;
         }
+        
         .time-picker {
             max-width: 150px;
         }
+        
         .toast-container {
             position: fixed;
             bottom: 20px;
             right: 20px;
             z-index: 1050;
+        }
+        
+        /* Form Controls */
+        .form-control {
+            border-radius: 10px;
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            transition: var(--transition);
+        }
+        
+        .form-control:focus {
+            border-color: var(--primary);
+            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15);
+        }
+        
+        .form-control-sm {
+            border-radius: 8px;
+            padding: 8px 12px;
+        }
+        
+        .form-label {
+            font-weight: 500;
+            color: var(--text);
+            margin-bottom: 6px;
+        }
+        
+        /* Badge styling */
+        .badge {
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 8px;
+        }
+        
+        .bg-primary {
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark)) !important;
+        }
+        
+        .bg-success {
+            background: linear-gradient(135deg, var(--success), #059669) !important;
+        }
+        
+        .bg-danger {
+            background: linear-gradient(135deg, var(--danger), #DC2626) !important;
+        }
+        
+        .bg-secondary {
+            background: linear-gradient(135deg, var(--secondary), #475569) !important;
+        }
+        
+        .bg-info {
+            background: linear-gradient(135deg, var(--info), #0284C7) !important;
+        }
+        
+        .bg-warning {
+            background: linear-gradient(135deg, var(--warning), #D97706) !important;
+        }
+        
+        /* List groups */
+        .list-group-item {
+            border-radius: 10px;
+            margin-bottom: 8px;
+            border: 1px solid var(--border);
+            padding: 12px 16px;
+        }
+        
+        .list-group-item:last-child {
+            margin-bottom: 0;
+        }
+        
+        /* Auto refresh toggle */
+        .form-check-input {
+            width: 18px;
+            height: 18px;
+            margin-top: 0.2em;
+            cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+        }
+        
+        .form-check-input:checked {
+            background-color: white;
+            border-color: white;
+        }
+        
+        .form-check-input:checked[type=checkbox] {
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='%234F46E5' d='M14.293 5.293a1 1 0 0 0-1.414 0L7 11.586 4.707 9.293a1 1 0 0 0-1.414 1.414l3 3a1 1 0 0 0 1.414 0l7-7a1 1 0 0 0 0-1.414z'/%3e%3c/svg%3e");
+        }
+        
+        .form-check-label {
+            color: white;
+            cursor: pointer;
+        }
+        
+        /* Collapse areas */
+        .collapse {
+            transition: var(--transition);
+        }
+        
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 32px 16px;
+        }
+        
+        .empty-state i {
+            font-size: 3rem;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+            background: linear-gradient(135deg, var(--primary-light), #E2E8F0);
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 20px auto;
+        }
+        
+        /* Status section */
+        .status-section {
+            display: flex;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .terminal-header {
+            background-color: #1A1A1A;
+            color: #E0E0E0;
+            padding: 10px 16px;
+            border-radius: 12px 12px 0 0;
+            font-family: 'Cascadia Code', 'Fira Code', 'JetBrains Mono', 'Courier New', monospace;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .terminal-header .dots {
+            display: flex;
+            gap: 6px;
+        }
+        
+        .terminal-header .dot {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+        }
+        
+        .terminal-header .dot-red { background-color: #FF5F56; }
+        .terminal-header .dot-yellow { background-color: #FFBD2E; }
+        .terminal-header .dot-green { background-color: #27C93F; }
+        
+        .log-container {
+            border-radius: 0 0 12px 12px;
+        }
+        
+        .btn-group > form {
+            margin-bottom: 0;
         }
     </style>
 </head>
@@ -596,11 +913,11 @@ HTML_TEMPLATE = """
                 <i class="fas fa-cloud me-2"></i> EC2 Manager Dashboard
             </a>
             <div class="d-flex align-items-center">
-                <div id="auto-refresh-container" class="text-light me-3">
-                    <input type="checkbox" id="auto-refresh" checked>
-                    <label for="auto-refresh">Auto refresh</label>
+                <div id="auto-refresh-container" class="form-check form-switch me-3">
+                    <input type="checkbox" class="form-check-input" id="auto-refresh" checked>
+                    <label class="form-check-label" for="auto-refresh">Auto refresh</label>
                 </div>
-                <i class="fas fa-sync-alt refresh-icon text-light" onclick="window.location.reload()"></i>
+                <i class="fas fa-sync-alt refresh-icon" onclick="window.location.reload()"></i>
             </div>
         </div>
     </nav>
@@ -609,7 +926,8 @@ HTML_TEMPLATE = """
         {% with messages = get_flashed_messages() %}
             {% if messages %}
                 {% for message in messages %}
-                    <div class="alert alert-info flash-message">
+                    <div class="alert flash-message">
+                        <i class="fas fa-info-circle me-2"></i>
                         {{ message }}
                     </div>
                 {% endfor %}
@@ -620,7 +938,7 @@ HTML_TEMPLATE = """
             <div class="col-md-4">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="fas fa-plus-circle me-2"></i> New Instance</span>
+                        <span><i class="fas fa-plus-circle"></i> New Instance</span>
                     </div>
                     <div class="card-body">
                         <form action="/create" method="post">
@@ -631,7 +949,7 @@ HTML_TEMPLATE = """
                         
                         <hr>
                         
-                        <h5>Add Existing Instance</h5>
+                        <h5 class="mb-3">Add Existing Instance</h5>
                         <form action="/add_existing" method="post">
                             <div class="mb-3">
                                 <input type="text" class="form-control" name="instance_id" placeholder="i-0123456789abcdef" required>
@@ -645,7 +963,7 @@ HTML_TEMPLATE = """
 
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="fas fa-tasks me-2"></i> Active Tasks</span>
+                        <span><i class="fas fa-tasks"></i> Active Tasks</span>
                     </div>
                     <div class="card-body">
                         <div id="active-tasks-container">
@@ -669,7 +987,7 @@ HTML_TEMPLATE = """
                 
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="fas fa-calendar-alt me-2"></i> Scheduled Tasks</span>
+                        <span><i class="fas fa-calendar-alt"></i> Scheduled Tasks</span>
                     </div>
                     <div class="card-body">
                         <div id="schedules-container">
@@ -706,7 +1024,7 @@ HTML_TEMPLATE = """
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="fas fa-server me-2"></i> Managed Instances</span>
+                        <span><i class="fas fa-server"></i> Managed Instances</span>
                         <span class="badge bg-primary">{{ instances|length }}</span>
                     </div>
                     <div class="card-body">
@@ -739,7 +1057,7 @@ HTML_TEMPLATE = """
                                                 </p>
                                                 {% if instance.schedule %}
                                                 <div class="schedule-info mb-2">
-                                                    <span class="badge bg-info">
+                                                    <span class="schedule-badge">
                                                         <i class="fas fa-clock me-1"></i> 
                                                         On: {{ instance.schedule.start }} | Off: {{ instance.schedule.end }}
                                                     </span>
@@ -757,8 +1075,7 @@ HTML_TEMPLATE = """
                                                         </button>
                                                     </form>
                                                     <form action="/stop/{{ instance_id }}" method="post" class="me-2">
-                                              
-<button class="btn btn-sm btn-danger" {% if instance.status == 'stopped' %}disabled{% endif %}>
+                                                        <button class="btn btn-sm btn-danger" {% if instance.status == 'stopped' %}disabled{% endif %}>
                                                             <i class="fas fa-stop me-1"></i> Stop
                                                         </button>
                                                     </form>
@@ -795,8 +1112,8 @@ HTML_TEMPLATE = """
                                 {% endfor %}
                             </div>
                         {% else %}
-                            <div class="text-center py-4">
-                                <i class="fas fa-cloud-upload-alt fa-3x text-muted mb-3"></i>
+                            <div class="empty-state">
+                                <i class="fas fa-cloud-upload-alt"></i>
                                 <p>No instances yet. Create a new one or add an existing instance.</p>
                             </div>
                         {% endif %}
@@ -805,12 +1122,20 @@ HTML_TEMPLATE = """
 
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <span><i class="fas fa-terminal me-2"></i> Operations Log</span>
+                        <span><i class="fas fa-terminal"></i> Operations Log</span>
                         <form action="/clear_logs" method="post" class="m-0">
                             <button type="submit" class="btn btn-sm btn-outline-light">Clear</button>
                         </form>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body p-0">
+                        <div class="terminal-header">
+                            <span>ec2manager@console</span>
+                            <div class="dots">
+                                <div class="dot dot-red"></div>
+                                <div class="dot dot-yellow"></div>
+                                <div class="dot dot-green"></div>
+                            </div>
+                        </div>
                         <div class="log-container" id="log-container">
                             {% if operations_log %}
                                 {% for log in operations_log %}
@@ -873,7 +1198,6 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
-
 # Handle graceful shutdown
 @atexit.register
 def shutdown_scheduler():
