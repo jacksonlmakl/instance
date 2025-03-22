@@ -3,3 +3,4 @@ sandbox.ipynb
 __pycache__
 .env
 env
+auth.pem
