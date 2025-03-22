@@ -5,6 +5,7 @@ import pytz
 import threading
 import traceback
 import json
+import atexit
 from flask import Flask, render_template_string, request, redirect, url_for, flash, jsonify
 from controller import EC2Manager
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -33,8 +34,23 @@ def scheduled_start_instance(instance_id):
         manager.start()
         instances[instance_id]["status"] = "running"
         manager.launch()
-        instances[instance_id]["url"] = manager.instance_url
-        operations_log.append(f"SCHEDULED: Instance {instance_id} started and launched successfully")
+        
+        # Explicitly update the instance URL
+        try:
+            # Get the latest instance information and update the URL
+            response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
+            instance = response['Reservations'][0]['Instances'][0]
+            public_ip = instance.get('PublicIpAddress')
+            
+            # Use the current URL generation logic that's in your EC2Manager
+            if public_ip:
+                instances[instance_id]["url"] = f"http://{public_ip}:1100"
+                operations_log.append(f"SCHEDULED: Instance {instance_id} is ready at {instances[instance_id]['url']}")
+            else:
+                operations_log.append(f"SCHEDULED WARNING: No public IP found for instance {instance_id}")
+        except Exception as e:
+            operations_log.append(f"SCHEDULED ERROR: Failed to get URL for instance {instance_id}: {str(e)}")
+            
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to start instance {instance_id}: {str(e)}")
 
@@ -164,16 +180,31 @@ def background_task(task_id, operation, instance_id=None):
         elif operation == "start":
             manager = EC2Manager(instance_id=instance_id)
             operations_log.append(f"Starting instance {instance_id}...")
-            manager.start()
+            start_result = manager.start()
             instances[instance_id]["status"] = "starting"
             
-            operations_log.append(f"Launching application on {instance_id}...")
-            manager.launch()
-            instances[instance_id]["status"] = "running"
-            
-            # Update instance URL
-            instances[instance_id]["url"] = manager.instance_url
-            operations_log.append(f"Instance {instance_id} is ready at {manager.instance_url}")
+            if start_result.get('success', False):
+                operations_log.append(f"Launching application on {instance_id}...")
+                launch_result = manager.launch()
+                instances[instance_id]["status"] = "running"
+                
+                # Explicitly check for the instance URL after launching
+                try:
+                    # Get the latest instance information and update the URL
+                    response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
+                    instance = response['Reservations'][0]['Instances'][0]
+                    public_ip = instance.get('PublicIpAddress')
+                    
+                    # Use the current URL generation logic that's in your EC2Manager
+                    if public_ip:
+                        instances[instance_id]["url"] = f"http://{public_ip}:1100"
+                        operations_log.append(f"Instance {instance_id} is ready at {instances[instance_id]['url']}")
+                    else:
+                        operations_log.append(f"Warning: No public IP found for instance {instance_id}")
+                except Exception as e:
+                    operations_log.append(f"Error getting instance URL: {str(e)}")
+            else:
+                operations_log.append(f"Failed to start instance {instance_id}")
             
         elif operation == "stop":
             manager = EC2Manager(instance_id=instance_id)
@@ -284,11 +315,17 @@ def add_existing_instance():
         # Try to get instance info to validate it exists
         response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
         instance_state = response['Reservations'][0]['Instances'][0]['State']['Name']
+        public_ip = response['Reservations'][0]['Instances'][0].get('PublicIpAddress')
+        
+        # Create URL if instance is running and has a public IP
+        instance_url = None
+        if instance_state == 'running' and public_ip:
+            instance_url = f"http://{public_ip}:1100"
         
         instances[instance_id] = {
             "id": instance_id,
             "status": instance_state,
-            "url": manager.instance_url if hasattr(manager, 'instance_url') and manager.instance_url else None
+            "url": instance_url
         }
         
         # Check if this instance has a schedule
@@ -328,6 +365,38 @@ def set_schedule(instance_id):
         flash(f"Schedule added for instance {instance_id}")
     except ValueError as e:
         flash(f"Invalid schedule parameters: {str(e)}")
+    
+    return redirect(url_for('index'))
+
+@app.route('/refresh_url/<instance_id>', methods=['POST'])
+def refresh_url(instance_id):
+    """Explicitly refresh the URL of an instance"""
+    if instance_id not in instances:
+        flash(f"Instance {instance_id} not found")
+        return redirect(url_for('index'))
+    
+    try:
+        manager = EC2Manager(instance_id=instance_id)
+        
+        # Get the latest instance information
+        response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
+        instance_state = response['Reservations'][0]['Instances'][0]['State']['Name']
+        public_ip = response['Reservations'][0]['Instances'][0].get('PublicIpAddress')
+        
+        # Update instance status
+        instances[instance_id]["status"] = instance_state
+        
+        # Update URL if instance is running
+        if instance_state == 'running' and public_ip:
+            instances[instance_id]["url"] = f"http://{public_ip}:1100"
+            flash(f"URL updated for instance {instance_id}")
+            operations_log.append(f"URL refreshed for instance {instance_id}: {instances[instance_id]['url']}")
+        else:
+            instances[instance_id]["url"] = None
+            flash(f"Instance {instance_id} is not running or has no public IP")
+    except Exception as e:
+        flash(f"Error refreshing URL: {str(e)}")
+        operations_log.append(f"Error refreshing URL for instance {instance_id}: {str(e)}")
     
     return redirect(url_for('index'))
 
@@ -659,6 +728,13 @@ HTML_TEMPLATE = """
                                                         <strong>URL:</strong> <a href="{{ instance.url }}" target="_blank" class="url-link">{{ instance.url }}</a>
                                                     {% else %}
                                                         <span class="text-muted">No URL available</span>
+                                                        {% if instance.status == 'running' %}
+                                                        <form action="/refresh_url/{{ instance_id }}" method="post" class="d-inline">
+                                                            <button type="submit" class="btn btn-sm btn-link text-primary p-0 ms-2">
+                                                                <i class="fas fa-sync-alt"></i> Refresh
+                                                            </button>
+                                                        </form>
+                                                        {% endif %}
                                                     {% endif %}
                                                 </p>
                                                 {% if instance.schedule %}
@@ -681,7 +757,8 @@ HTML_TEMPLATE = """
                                                         </button>
                                                     </form>
                                                     <form action="/stop/{{ instance_id }}" method="post" class="me-2">
-                                                        <button class="btn btn-sm btn-danger" {% if instance.status == 'stopped' %}disabled{% endif %}>
+                                              
+<button class="btn btn-sm btn-danger" {% if instance.status == 'stopped' %}disabled{% endif %}>
                                                             <i class="fas fa-stop me-1"></i> Stop
                                                         </button>
                                                     </form>
@@ -749,7 +826,7 @@ HTML_TEMPLATE = """
         </div>
     </div>
 
-    
+    <div class="toast-container"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
     <script>
@@ -768,15 +845,17 @@ HTML_TEMPLATE = """
             fetch('/status')
                 .then(response => response.json())
                 .then(data => {
-                    // Update instance statuses
-                    const instancesContainer = document.getElementById('instances-container');
-                    // Only refresh the page if data changed significantly
-                    if (Object.keys(data.instances).length !== {{ instances|tojson|length }} ||
-                        data.tasks.length !== {{ active_tasks|tojson|length }} ||
-                        data.log_count > lastLogCount) {
-                        
+                    // Check if data changed significantly
+                    const instanceCount = Object.keys(data.instances).length;
+                    const taskCount = data.tasks.length;
+                    const logCount = data.log_count;
+                    
+                    // Only refresh if needed
+                    if (instanceCount !== {{ instances|length }} || 
+                        taskCount !== {{ active_tasks|length }} || 
+                        logCount > lastLogCount) {
                         window.location.reload();
-                        lastLogCount = data.log_count;
+                        lastLogCount = logCount;
                     }
                 })
                 .catch(error => console.error('Error refreshing data:', error));
@@ -796,8 +875,6 @@ HTML_TEMPLATE = """
 """
 
 # Handle graceful shutdown
-import atexit
-
 @atexit.register
 def shutdown_scheduler():
     if scheduler.running:
