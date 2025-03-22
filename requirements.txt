@@ -1,4 +1,6 @@
 boto3
 pandas
 json5
-
+flask
+paramiko
+dotenv
