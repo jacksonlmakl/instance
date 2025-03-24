@@ -154,7 +154,7 @@ class EC2Manager:
         try:
             result = self._execute_commands(
                 instance_id=instance_id,
-                commands=["""cd manager && (bash ~/manager/launch > ~/launch.log 2>&1 &) < /dev/null """]
+                commands=["""cd manager && (bash ~/manager/launch > ~/launch.log 2>&1 &) < /dev/null ""","""cd manager && (bash ~/manager/start > ~/start.log 2>&1 &) < /dev/null """]
             )
             
             print("\nLaunch execution summary:")
