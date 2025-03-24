@@ -31,18 +31,76 @@ def scheduled_start_instance(instance_id):
     operations_log.append(f"SCHEDULED: Starting instance {instance_id} based on schedule")
     try:
         manager = EC2Manager(instance_id=instance_id)
-        manager.start()
-        instances[instance_id]["status"] = "running"
+        
+        # Check the current instance state
+        try:
+            response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
+            instance_state = response['Reservations'][0]['Instances'][0]['State']['Name']
+            operations_log.append(f"SCHEDULED: Current instance state for {instance_id} is {instance_state}")
+            
+            # Update our local status record
+            if instance_id in instances:
+                instances[instance_id]["status"] = instance_state
+        except Exception as e:
+            operations_log.append(f"SCHEDULED ERROR: Failed to get state for instance {instance_id}: {str(e)}")
+            instance_state = "unknown"
+        
+        # If the instance is stopped, we need to start it first
+        if instance_state == "stopped":
+            operations_log.append(f"SCHEDULED: Instance {instance_id} is stopped. Starting it first...")
+            start_result = manager.start()
+            
+            if not start_result.get('success', False):
+                operations_log.append(f"SCHEDULED ERROR: Failed to start stopped instance {instance_id}")
+                return
+                
+            operations_log.append(f"SCHEDULED: Instance {instance_id} started successfully, now waiting for it to be ready...")
+            
+            # Wait for the instance to be in running state before launching (max 60 seconds)
+            max_retries = 20
+            retries = 0
+            wait_seconds = 3
+            
+            while retries < max_retries:
+                try:
+                    response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
+                    current_state = response['Reservations'][0]['Instances'][0]['State']['Name']
+                    
+                    if current_state == "running":
+                        operations_log.append(f"SCHEDULED: Instance {instance_id} is now running")
+                        break
+                    
+                    operations_log.append(f"SCHEDULED: Instance {instance_id} is in {current_state} state, waiting...")
+                    time.sleep(wait_seconds)
+                    retries += 1
+                except Exception as e:
+                    operations_log.append(f"SCHEDULED ERROR: Error while waiting for instance: {str(e)}")
+                    time.sleep(wait_seconds)
+                    retries += 1
+            
+            if retries >= max_retries:
+                operations_log.append(f"SCHEDULED ERROR: Timeout waiting for instance {instance_id} to start")
+                return
+                
+            # Update our status record
+            if instance_id in instances:
+                instances[instance_id]["status"] = "running"
+        
+        # Now launch the application
+        operations_log.append(f"SCHEDULED: Launching application on instance {instance_id}")
         manager.launch()
         
-        # Explicitly update the instance URL
+        if instance_id in instances:
+            instances[instance_id]["status"] = "running"
+        
+        # Update the instance URL
         try:
-            # Get the latest instance information and update the URL
+            # Get the latest instance information
             response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
             instance = response['Reservations'][0]['Instances'][0]
             public_ip = instance.get('PublicIpAddress')
             
-            # Use the current URL generation logic that's in your EC2Manager
+            # Use the current URL generation logic
             if public_ip:
                 instances[instance_id]["url"] = f"http://{public_ip}:1100"
                 operations_log.append(f"SCHEDULED: Instance {instance_id} is ready at {instances[instance_id]['url']}")
@@ -53,7 +111,6 @@ def scheduled_start_instance(instance_id):
             
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to start instance {instance_id}: {str(e)}")
-
 def scheduled_stop_instance(instance_id):
     """Function to stop an instance on schedule"""
     operations_log.append(f"SCHEDULED: Stopping instance {instance_id} based on schedule")
