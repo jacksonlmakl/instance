@@ -27,90 +27,113 @@ scheduler = BackgroundScheduler(timezone=pytz.timezone('America/New_York'))
 scheduler.start()
 
 def scheduled_start_instance(instance_id):
-    """Function to start an instance on schedule with enhanced error handling"""
-    operations_log.append(f"SCHEDULED: Starting instance {instance_id} based on schedule")
+    """Function to start an instance on schedule - completely rewritten"""
+    operations_log.append(f"SCHEDULED: Attempting to start instance {instance_id}")
     
+    # Bail early if the instance isn't in our tracking
     if instance_id not in instances:
         operations_log.append(f"SCHEDULED ERROR: Instance {instance_id} not found in managed instances")
         return
-        
+    
     try:
-        # Initialize EC2Manager
-        manager = EC2Manager(instance_id=instance_id)
+        # Create a fresh boto3 client directly instead of using the manager
+        # This eliminates any potential issues with the EC2Manager implementation
+        import boto3
+        ec2 = boto3.client('ec2')
         
-        # Check current instance state first
+        # Check current state
+        describe_response = ec2.describe_instances(InstanceIds=[instance_id])
+        current_state = describe_response['Reservations'][0]['Instances'][0]['State']['Name']
+        operations_log.append(f"SCHEDULED: Instance {instance_id} current state: {current_state}")
+        
+        # If the instance is already running, just launch the app
+        if current_state == 'running':
+            operations_log.append(f"SCHEDULED: Instance {instance_id} is already running, proceeding to launch app")
+        else:
+            # Start the instance using direct boto3 call
+            operations_log.append(f"SCHEDULED: Starting instance {instance_id} via direct API call")
+            start_response = ec2.start_instances(InstanceIds=[instance_id])
+            operations_log.append(f"SCHEDULED: Start response: {start_response}")
+            
+            # Update our tracking
+            instances[instance_id]["status"] = "starting"
+            
+            # Wait for the instance to be running
+            operations_log.append(f"SCHEDULED: Waiting for instance {instance_id} to reach 'running' state")
+            waiter = ec2.get_waiter('instance_running')
+            waiter.wait(
+                InstanceIds=[instance_id],
+                WaiterConfig={
+                    'Delay': 5,
+                    'MaxAttempts': 24  # 2 minutes max
+                }
+            )
+            operations_log.append(f"SCHEDULED: Instance {instance_id} is now running")
+            
+            # Additional wait to ensure all services are up
+            operations_log.append(f"SCHEDULED: Waiting additional time for services to initialize")
+            time.sleep(15)
+        
+        # Update status
+        instances[instance_id]["status"] = "running"
+        
+        # Get the current IP address
+        describe_response = ec2.describe_instances(InstanceIds=[instance_id])
+        instance = describe_response['Reservations'][0]['Instances'][0]
+        public_ip = instance.get('PublicIpAddress')
+        
+        if not public_ip:
+            operations_log.append(f"SCHEDULED ERROR: No public IP address found for instance {instance_id}")
+            return
+        
+        # Set the URL in our tracking
+        instances[instance_id]["url"] = f"http://{public_ip}:1100"
+        operations_log.append(f"SCHEDULED: Instance URL set to {instances[instance_id]['url']}")
+        
+        # Now launch the application by running the script on the remote instance
+        operations_log.append(f"SCHEDULED: Launching application on instance {instance_id}")
+        
+        # Use SSH to run commands on the instance
+        import paramiko
+        
+        ssh = paramiko.SSHClient()
+        ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        
         try:
-            response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
-            current_state = response['Reservations'][0]['Instances'][0]['State']['Name']
-            operations_log.append(f"SCHEDULED: Current state of instance {instance_id} is '{current_state}'")
+            # Connect to the instance
+            operations_log.append(f"SCHEDULED: Connecting to instance via SSH at {public_ip}")
+            ssh.connect(
+                hostname=public_ip,
+                username='ec2-user',  # Adjust if you use a different user
+                timeout=30
+            )
             
-            # Update our local status
-            instances[instance_id]["status"] = current_state
-        except Exception as e:
-            operations_log.append(f"SCHEDULED ERROR: Failed to check state: {str(e)}")
-            current_state = "unknown"
-        
-        # If instance is not running, start it explicitly with AWS API call
-        if current_state != "running":
-            operations_log.append(f"SCHEDULED: Instance is not running. Explicitly starting {instance_id}...")
+            # Run the launch command - adjust this to match your actual launch command
+            launch_command = "cd ~/manager && bash launch.sh"
+            operations_log.append(f"SCHEDULED: Executing command: {launch_command}")
             
-            try:
-                # Direct EC2 API call to start the instance
-                start_response = manager.ec2_client.start_instances(InstanceIds=[instance_id])
-                operations_log.append(f"SCHEDULED: EC2 start API response: {start_response}")
-                
-                # Update instance status to starting
-                instances[instance_id]["status"] = "starting"
-                
-                # Wait for the instance to be in running state (up to 2 minutes)
-                operations_log.append(f"SCHEDULED: Waiting for instance {instance_id} to reach 'running' state...")
-                waiter = manager.ec2_client.get_waiter('instance_running')
-                waiter.wait(
-                    InstanceIds=[instance_id],
-                    WaiterConfig={
-                        'Delay': 5,       # Check every 5 seconds
-                        'MaxAttempts': 24 # Up to 2 minutes (24 * 5s)
-                    }
-                )
-                operations_log.append(f"SCHEDULED: Instance {instance_id} is now in 'running' state")
-                
-                # Update our local status
-                instances[instance_id]["status"] = "running"
-            except Exception as e:
-                operations_log.append(f"SCHEDULED ERROR: Failed during instance start: {str(e)}")
-                return
-        
-        # Now that we know the instance is running, let's wait a bit to ensure services are ready
-        operations_log.append(f"SCHEDULED: Waiting for services to initialize on {instance_id}...")
-        time.sleep(10)  # Give some time for the instance to fully initialize
-        
-        # Now launch the application
-        operations_log.append(f"SCHEDULED: Launching application on instance {instance_id}...")
-        try:
-            # Use the launch method from EC2Manager
-            launch_result = manager.launch()
-            operations_log.append(f"SCHEDULED: Launch result: {launch_result}")
+            stdin, stdout, stderr = ssh.exec_command(launch_command)
+            stdout_result = stdout.read().decode('utf-8')
+            stderr_result = stderr.read().decode('utf-8')
             
-            # Update instance URL
-            try:
-                # Get the latest instance information
-                response = manager.ec2_client.describe_instances(InstanceIds=[instance_id])
-                instance = response['Reservations'][0]['Instances'][0]
-                public_ip = instance.get('PublicIpAddress')
-                
-                if public_ip:
-                    instances[instance_id]["url"] = f"http://{public_ip}:1100"
-                    operations_log.append(f"SCHEDULED: Instance {instance_id} is ready at {instances[instance_id]['url']}")
-                else:
-                    operations_log.append(f"SCHEDULED WARNING: No public IP found for instance {instance_id}")
-            except Exception as e:
-                operations_log.append(f"SCHEDULED ERROR: Failed to get URL: {str(e)}")
-        except Exception as e:
-            operations_log.append(f"SCHEDULED ERROR: Failed to launch application: {str(e)}")
+            if stderr_result:
+                operations_log.append(f"SCHEDULED WARNING: Command stderr: {stderr_result}")
+            
+            operations_log.append(f"SCHEDULED: Command stdout: {stdout_result}")
+            operations_log.append(f"SCHEDULED: Application launch complete for instance {instance_id}")
+            
+        except Exception as ssh_error:
+            operations_log.append(f"SCHEDULED ERROR: SSH connection/command failed: {str(ssh_error)}")
+        finally:
+            ssh.close()
             
     except Exception as e:
-        operations_log.append(f"SCHEDULED ERROR: Unhandled exception in scheduled start: {str(e)}")
+        operations_log.append(f"SCHEDULED ERROR: Failed to start instance {instance_id}: {str(e)}")
         operations_log.append(traceback.format_exc())
+        
+        # Update status to reflect the error
+        if instance_id in instances:
+            instances[instance_id]["status"] = "error"
 
 
 def scheduled_stop_instance(instance_id):
