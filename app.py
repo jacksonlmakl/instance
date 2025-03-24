@@ -104,7 +104,7 @@ def scheduled_start_instance(instance_id):
             operations_log.append(f"SCHEDULED: Connecting to instance via SSH at {public_ip}")
             ssh.connect(
                 hostname=public_ip,
-                username='ec2-user',  # Adjust if you use a different user
+                username='ubuntu',  # Adjust if you use a different user
                 timeout=30
             )
             
