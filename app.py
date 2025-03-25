@@ -14,7 +14,10 @@ from apscheduler.triggers.cron import CronTrigger
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# Store instances in memory - in a real app, you'd use a database
+# Configuration file path
+CONFIG_FILE = "ec2_manager_config.json"
+
+# Store instances and schedules with persistence
 instances = {}
 operations_log = []
 schedules = {}
@@ -31,7 +34,53 @@ scheduler = BackgroundScheduler(
         'misfire_grace_time': 60 * 5  # Allow jobs to misfire by up to 5 minutes and still run
     }
 )
-scheduler.start()
+
+def save_configuration():
+    """Save current configuration to a JSON file"""
+    config = {
+        "instances": instances,
+        "schedules": schedules
+    }
+    
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=4)
+        operations_log.append(f"Configuration saved to {CONFIG_FILE}")
+    except Exception as e:
+        operations_log.append(f"Error saving configuration: {str(e)}")
+        operations_log.append(traceback.format_exc())
+
+def load_configuration():
+    """Load configuration from JSON file if it exists"""
+    global instances, schedules
+    
+    if not os.path.exists(CONFIG_FILE):
+        operations_log.append(f"No configuration file found at {CONFIG_FILE}")
+        return
+    
+    try:
+        with open(CONFIG_FILE, 'r') as f:
+            config = json.load(f)
+        
+        instances = config.get("instances", {})
+        schedules = config.get("schedules", {})
+        
+        operations_log.append(f"Configuration loaded from {CONFIG_FILE}")
+        operations_log.append(f"Loaded {len(instances)} instances and {len(schedules)} schedules")
+        
+        # Restore schedules
+        for instance_id, schedule in schedules.items():
+            # Only restore schedules for instances that exist
+            if instance_id in instances:
+                add_daily_schedule(
+                    instance_id, 
+                    schedule.get("start"), 
+                    schedule.get("duration"),
+                    save_config=False  # Don't save config during initial load
+                )
+    except Exception as e:
+        operations_log.append(f"Error loading configuration: {str(e)}")
+        operations_log.append(traceback.format_exc())
 
 def scheduled_start_instance(instance_id):
     """Function to start an instance on schedule with proper AWS configuration"""
@@ -110,10 +159,14 @@ def scheduled_start_instance(instance_id):
                 
             operations_log.append(f"SCHEDULED: Successfully started and launched instance {instance_id}")
             
+            # Save configuration after state change
+            save_configuration()
+            
         except Exception as instance_error:
             operations_log.append(f"SCHEDULED ERROR: Failed to start instance {instance_id}: {str(instance_error)}")
             operations_log.append(traceback.format_exc())
             instances[instance_id]["status"] = "error"
+            save_configuration()
             
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to create EC2Manager for instance {instance_id}: {str(e)}")
@@ -122,6 +175,7 @@ def scheduled_start_instance(instance_id):
         # Update status to reflect the error
         if instance_id in instances:
             instances[instance_id]["status"] = "error"
+            save_configuration()
             
 def scheduled_stop_instance(instance_id):
     """Function to stop an instance on schedule using the manager"""
@@ -153,19 +207,24 @@ def scheduled_stop_instance(instance_id):
                 instances[instance_id]["status"] = "stopped"
                 instances[instance_id]["url"] = None
             
+            # Save configuration after state change
+            save_configuration()
+            
         except Exception as instance_error:
             operations_log.append(f"SCHEDULED ERROR: Failed to stop instance {instance_id}: {str(instance_error)}")
             operations_log.append(traceback.format_exc())
             if instance_id in instances:
                 instances[instance_id]["status"] = "error"
+                save_configuration()
     
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to create EC2Manager for instance {instance_id}: {str(e)}")
         operations_log.append(traceback.format_exc())
         if instance_id in instances:
             instances[instance_id]["status"] = "error"
+            save_configuration()
 
-def add_daily_schedule(instance_id, start_time, duration_minutes):
+def add_daily_schedule(instance_id, start_time, duration_minutes, save_config=True):
     """Add a daily schedule for an instance with fixed timezone handling"""
     global schedules
     
@@ -257,6 +316,10 @@ def add_daily_schedule(instance_id, start_time, duration_minutes):
             "duration": duration_minutes
         }
     
+    # Save configuration if requested
+    if save_config:
+        save_configuration()
+    
     # If we need to run immediately, do it now
     if run_immediately:
         operations_log.append(f"Time is {current_hour}:{current_minute}, triggering immediate start for instance {instance_id}")
@@ -288,8 +351,11 @@ def remove_schedule(instance_id):
         del instances[instance_id]["schedule"]
     
     operations_log.append(f"Schedule removed for instance {instance_id}")
+    
+    # Save configuration after removing schedule
+    save_configuration()
 
-def background_task(task_id, operation, instance_id=None):
+def background_task(task_id, operation, instance_id=None, display_name=None):
     global active_tasks, instances, operations_log
     
     try:
@@ -297,32 +363,41 @@ def background_task(task_id, operation, instance_id=None):
             manager = EC2Manager()
             operations_log.append(f"Creating new instance...")
             new_instance_id = manager.create()
+            
+            # Use provided display name or default to instance ID
+            instance_display_name = display_name if display_name else f"Instance {new_instance_id[:8]}"
+            
             instances[new_instance_id] = {
                 "id": new_instance_id,
+                "display_name": instance_display_name,
                 "status": "created",
                 "url": None
             }
             
-            operations_log.append(f"Setting up instance {new_instance_id}...")
+            operations_log.append(f"Setting up instance {new_instance_id} ({instance_display_name})...")
             manager.setup()
             instances[new_instance_id]["status"] = "setup"
             
-            operations_log.append(f"Launching application on {new_instance_id}...")
+            operations_log.append(f"Launching application on {new_instance_id} ({instance_display_name})...")
             manager.launch()
             instances[new_instance_id]["status"] = "running"
             
             # Update instance URL
             instances[new_instance_id]["url"] = manager.instance_url
-            operations_log.append(f"Instance {new_instance_id} is ready at {manager.instance_url}")
+            operations_log.append(f"Instance {new_instance_id} ({instance_display_name}) is ready at {manager.instance_url}")
+            
+            # Save configuration after creating instance
+            save_configuration()
             
         elif operation == "start":
             manager = EC2Manager(instance_id=instance_id)
-            operations_log.append(f"Starting instance {instance_id}...")
+            display_name = instances[instance_id].get("display_name", instance_id[:8])
+            operations_log.append(f"Starting instance {instance_id} ({display_name})...")
             start_result = manager.start()
             instances[instance_id]["status"] = "starting"
             
             if start_result.get('success', False):
-                operations_log.append(f"Launching application on {instance_id}...")
+                operations_log.append(f"Launching application on {instance_id} ({display_name})...")
                 launch_result = manager.launch()
                 instances[instance_id]["status"] = "running"
                 
@@ -336,21 +411,37 @@ def background_task(task_id, operation, instance_id=None):
                     # Use the current URL generation logic that's in your EC2Manager
                     if public_ip:
                         instances[instance_id]["url"] = f"http://{public_ip}:1100"
-                        operations_log.append(f"Instance {instance_id} is ready at {instances[instance_id]['url']}")
+                        operations_log.append(f"Instance {instance_id} ({display_name}) is ready at {instances[instance_id]['url']}")
                     else:
-                        operations_log.append(f"Warning: No public IP found for instance {instance_id}")
+                        operations_log.append(f"Warning: No public IP found for instance {instance_id} ({display_name})")
                 except Exception as e:
                     operations_log.append(f"Error getting instance URL: {str(e)}")
             else:
-                operations_log.append(f"Failed to start instance {instance_id}")
+                operations_log.append(f"Failed to start instance {instance_id} ({display_name})")
+            
+            # Save configuration after starting instance
+            save_configuration()
             
         elif operation == "stop":
             manager = EC2Manager(instance_id=instance_id)
-            operations_log.append(f"Stopping instance {instance_id}...")
+            display_name = instances[instance_id].get("display_name", instance_id[:8])
+            operations_log.append(f"Stopping instance {instance_id} ({display_name})...")
             manager.stop()
             instances[instance_id]["status"] = "stopped"
             instances[instance_id]["url"] = None
-            operations_log.append(f"Instance {instance_id} stopped successfully")
+            operations_log.append(f"Instance {instance_id} ({display_name}) stopped successfully")
+            
+            # Save configuration after stopping instance
+            save_configuration()
+            
+        elif operation == "update_display_name":
+            if instance_id in instances and display_name:
+                old_name = instances[instance_id].get("display_name", instance_id[:8])
+                instances[instance_id]["display_name"] = display_name
+                operations_log.append(f"Updated display name for instance {instance_id}: {old_name} -> {display_name}")
+                
+                # Save configuration after updating display name
+                save_configuration()
     
     except Exception as e:
         error_msg = f"Error in {operation} operation: {str(e)}"
@@ -358,6 +449,7 @@ def background_task(task_id, operation, instance_id=None):
         operations_log.append(traceback.format_exc())
         if instance_id and instance_id in instances:
             instances[instance_id]["status"] = "error"
+            save_configuration()
     
     finally:
         # Remove task from active tasks
@@ -391,16 +483,18 @@ def index():
 @app.route('/create', methods=['POST'])
 def create_instance():
     task_id = f"create_{int(time.time())}"
-    active_tasks[task_id] = "Creating new instance"
+    display_name = request.form.get('display_name', '').strip()
+    
+    active_tasks[task_id] = f"Creating new instance{f' ({display_name})' if display_name else ''}"
     
     thread = threading.Thread(
         target=background_task,
-        args=(task_id, "create")
+        args=(task_id, "create", None, display_name)
     )
     thread.daemon = True
     thread.start()
     
-    flash("Creating new instance. This may take a few minutes.")
+    flash(f"Creating new instance{f' ({display_name})' if display_name else ''}. This may take a few minutes.")
     return redirect(url_for('index'))
 
 @app.route('/start/<instance_id>', methods=['POST'])
@@ -409,8 +503,9 @@ def start_instance(instance_id):
         flash(f"Instance {instance_id} not found")
         return redirect(url_for('index'))
     
+    display_name = instances[instance_id].get("display_name", instance_id[:8])
     task_id = f"start_{instance_id}_{int(time.time())}"
-    active_tasks[task_id] = f"Starting instance {instance_id}"
+    active_tasks[task_id] = f"Starting instance {display_name}"
     
     thread = threading.Thread(
         target=background_task,
@@ -419,7 +514,7 @@ def start_instance(instance_id):
     thread.daemon = True
     thread.start()
     
-    flash(f"Starting instance {instance_id}. This may take a few minutes.")
+    flash(f"Starting instance {display_name}. This may take a few minutes.")
     return redirect(url_for('index'))
 
 @app.route('/stop/<instance_id>', methods=['POST'])
@@ -428,8 +523,9 @@ def stop_instance(instance_id):
         flash(f"Instance {instance_id} not found")
         return redirect(url_for('index'))
     
+    display_name = instances[instance_id].get("display_name", instance_id[:8])
     task_id = f"stop_{instance_id}_{int(time.time())}"
-    active_tasks[task_id] = f"Stopping instance {instance_id}"
+    active_tasks[task_id] = f"Stopping instance {display_name}"
     
     thread = threading.Thread(
         target=background_task,
@@ -438,15 +534,21 @@ def stop_instance(instance_id):
     thread.daemon = True
     thread.start()
     
-    flash(f"Stopping instance {instance_id}. This may take a few minutes.")
+    flash(f"Stopping instance {display_name}. This may take a few minutes.")
     return redirect(url_for('index'))
 
 @app.route('/add_existing', methods=['POST'])
 def add_existing_instance():
     instance_id = request.form.get('instance_id')
+    display_name = request.form.get('display_name', '').strip()
+    
     if not instance_id:
         flash("Please provide an instance ID")
         return redirect(url_for('index'))
+    
+    # Use provided display name or default to instance ID
+    if not display_name:
+        display_name = f"Instance {instance_id[:8]}"
     
     try:
         manager = EC2Manager(instance_id=instance_id)
@@ -462,6 +564,7 @@ def add_existing_instance():
         
         instances[instance_id] = {
             "id": instance_id,
+            "display_name": display_name,
             "status": instance_state,
             "url": instance_url
         }
@@ -470,12 +573,40 @@ def add_existing_instance():
         if instance_id in schedules:
             instances[instance_id]["schedule"] = schedules[instance_id]
         
-        flash(f"Instance {instance_id} added successfully")
-        operations_log.append(f"Added existing instance {instance_id}")
+        flash(f"Instance {display_name} added successfully")
+        operations_log.append(f"Added existing instance {instance_id} with display name '{display_name}'")
+        
+        # Save configuration after adding instance
+        save_configuration()
+        
     except Exception as e:
         flash(f"Error adding instance: {str(e)}")
         operations_log.append(f"Error adding instance {instance_id}: {str(e)}")
     
+    return redirect(url_for('index'))
+
+@app.route('/update_display_name/<instance_id>', methods=['POST'])
+def update_display_name(instance_id):
+    if instance_id not in instances:
+        flash(f"Instance {instance_id} not found")
+        return redirect(url_for('index'))
+    
+    display_name = request.form.get('display_name', '').strip()
+    if not display_name:
+        flash("Display name cannot be empty")
+        return redirect(url_for('index'))
+    
+    task_id = f"update_name_{instance_id}_{int(time.time())}"
+    active_tasks[task_id] = f"Updating display name for {instances[instance_id].get('display_name', instance_id[:8])}"
+    
+    thread = threading.Thread(
+        target=background_task,
+        args=(task_id, "update_display_name", instance_id, display_name)
+    )
+    thread.daemon = True
+    thread.start()
+    
+    flash(f"Display name updated to '{display_name}'")
     return redirect(url_for('index'))
 
 @app.route('/schedule/<instance_id>', methods=['POST'])
@@ -500,7 +631,8 @@ def set_schedule(instance_id):
         datetime.datetime.strptime(start_time, '%H:%M')
         
         add_daily_schedule(instance_id, start_time, duration_minutes)
-        flash(f"Schedule added for instance {instance_id}")
+        display_name = instances[instance_id].get("display_name", instance_id[:8])
+        flash(f"Schedule added for instance {display_name}")
     except ValueError as e:
         flash(f"Invalid schedule parameters: {str(e)}")
     
@@ -513,12 +645,13 @@ def run_schedule_now(instance_id):
         flash(f"Instance {instance_id} not found")
         return redirect(url_for('index'))
         
-    operations_log.append(f"MANUAL EXECUTION: Running scheduled start for instance {instance_id} immediately")
+    display_name = instances[instance_id].get("display_name", instance_id[:8])
+    operations_log.append(f"MANUAL EXECUTION: Running scheduled start for instance {instance_id} ({display_name}) immediately")
     
     # Run the job directly
     try:
         scheduled_start_instance(instance_id)
-        flash(f"Scheduled start job executed immediately for instance {instance_id}")
+        flash(f"Scheduled start job executed immediately for instance {display_name}")
     except Exception as e:
         flash(f"Error running scheduled start: {str(e)}")
         operations_log.append(f"Error in manual execution: {str(e)}")
@@ -532,6 +665,8 @@ def refresh_url(instance_id):
     if instance_id not in instances:
         flash(f"Instance {instance_id} not found")
         return redirect(url_for('index'))
+    
+    display_name = instances[instance_id].get("display_name", instance_id[:8])
     
     try:
         manager = EC2Manager(instance_id=instance_id)
@@ -547,14 +682,18 @@ def refresh_url(instance_id):
         # Update URL if instance is running
         if instance_state == 'running' and public_ip:
             instances[instance_id]["url"] = f"http://{public_ip}:1100"
-            flash(f"URL updated for instance {instance_id}")
-            operations_log.append(f"URL refreshed for instance {instance_id}: {instances[instance_id]['url']}")
+            flash(f"URL updated for instance {display_name}")
+            operations_log.append(f"URL refreshed for instance {instance_id} ({display_name}): {instances[instance_id]['url']}")
         else:
             instances[instance_id]["url"] = None
-            flash(f"Instance {instance_id} is not running or has no public IP")
+            flash(f"Instance {display_name} is not running or has no public IP")
+        
+        # Save configuration after refreshing URL
+        save_configuration()
+        
     except Exception as e:
         flash(f"Error refreshing URL: {str(e)}")
-        operations_log.append(f"Error refreshing URL for instance {instance_id}: {str(e)}")
+        operations_log.append(f"Error refreshing URL for instance {instance_id} ({display_name}): {str(e)}")
     
     return redirect(url_for('index'))
 
@@ -564,8 +703,9 @@ def remove_instance_schedule(instance_id):
         flash(f"Instance {instance_id} not found")
         return redirect(url_for('index'))
     
+    display_name = instances[instance_id].get("display_name", instance_id[:8])
     remove_schedule(instance_id)
-    flash(f"Schedule removed for instance {instance_id}")
+    flash(f"Schedule removed for instance {display_name}")
     return redirect(url_for('index'))
 
 @app.route('/scheduler_status')
@@ -604,13 +744,17 @@ def status():
 @app.route('/remove_instance/<instance_id>', methods=['POST'])
 def remove_instance(instance_id):
     if instance_id in instances:
+        display_name = instances[instance_id].get("display_name", instance_id[:8])
         # Remove any schedules for this instance
         remove_schedule(instance_id)
         
         # Remove instance from dashboard
         del instances[instance_id]
-        flash(f"Instance {instance_id} removed from dashboard")
-        operations_log.append(f"Removed instance {instance_id} from dashboard")
+        flash(f"Instance {display_name} removed from dashboard")
+        operations_log.append(f"Removed instance {instance_id} ({display_name}) from dashboard")
+        
+        # Save configuration after removing instance
+        save_configuration()
     else:
         flash(f"Instance {instance_id} not found")
     
@@ -1086,6 +1230,40 @@ HTML_TEMPLATE = """
         .btn-group > form {
             margin-bottom: 0;
         }
+        
+        /* Instance display name styles */
+        .instance-name {
+            font-weight: 600;
+            font-size: 1.1rem;
+            color: var(--dark);
+            display: block;
+            margin-bottom: 5px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .instance-id {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            display: block;
+        }
+        
+        .edit-name-btn {
+            background: none;
+            border: none;
+            color: var(--info);
+            padding: 0;
+            font-size: 0.85rem;
+            margin-left: 5px;
+            cursor: pointer;
+            transition: var(--transition);
+        }
+        
+        .edit-name-btn:hover {
+            color: var(--primary);
+            transform: scale(1.1);
+        }
     </style>
 </head>
 <body>
@@ -1124,6 +1302,10 @@ HTML_TEMPLATE = """
                     </div>
                     <div class="card-body">
                         <form action="/create" method="post">
+                            <div class="mb-3">
+                                <label for="display_name" class="form-label">Display Name (optional)</label>
+                                <input type="text" class="form-control" id="display_name" name="display_name" placeholder="My Production Server">
+                            </div>
                             <button type="submit" class="btn btn-primary w-100">
                                 <i class="fas fa-cloud-upload-alt me-2"></i> Create New Instance
                             </button>
@@ -1134,7 +1316,12 @@ HTML_TEMPLATE = """
                         <h5 class="mb-3">Add Existing Instance</h5>
                         <form action="/add_existing" method="post">
                             <div class="mb-3">
-                                <input type="text" class="form-control" name="instance_id" placeholder="i-0123456789abcdef" required>
+                                <label for="instance_id" class="form-label">Instance ID</label>
+                                <input type="text" class="form-control" id="instance_id" name="instance_id" placeholder="i-0123456789abcdef" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="display_name_existing" class="form-label">Display Name (optional)</label>
+                                <input type="text" class="form-control" id="display_name_existing" name="display_name" placeholder="My Test Server">
                             </div>
                             <button type="submit" class="btn btn-outline-primary w-100">
                                 <i class="fas fa-link me-2"></i> Add Instance
@@ -1179,7 +1366,11 @@ HTML_TEMPLATE = """
                                     <li class="list-group-item d-flex justify-content-between align-items-center">
                                         <div>
                                             <i class="fas fa-server me-2 text-primary"></i>
-                                            {{ instance_id[:8] }}...
+                                            {% if instance_id in instances %}
+                                                <strong>{{ instances[instance_id].get('display_name', instance_id[:8]) }}</strong>
+                                            {% else %}
+                                                {{ instance_id[:8] }}...
+                                            {% endif %}
                                             <br>
                                             <small class="text-muted">
                                                 ON: <span class="text-success">{{ schedule.start }}</span> | 
@@ -1223,13 +1414,19 @@ HTML_TEMPLATE = """
                                     <div class="col-md-6 mb-3">
                                         <div class="card instance-card">
                                             <div class="card-body">
-                                                <h5 class="card-title d-flex justify-content-between">
-                                                    <span>
+                                                <div class="d-flex justify-content-between align-items-start mb-2">
+                                                    <div>
                                                         <span class="status-indicator status-{{ instance.status }}"></span>
-                                                        {{ instance_id[:8] }}...
-                                                    </span>
+                                                        <span class="instance-name">
+                                                            {{ instance.get('display_name', 'Instance ' + instance_id[:8]) }}
+                                                            <button type="button" class="edit-name-btn" onclick="showEditNameModal('{{ instance_id }}', '{{ instance.get('display_name', '') }}')">
+                                                                <i class="fas fa-edit"></i>
+                                                            </button>
+                                                        </span>
+                                                        <span class="instance-id">{{ instance_id }}</span>
+                                                    </div>
                                                     <span class="badge bg-secondary">{{ instance.status }}</span>
-                                                </h5>
+                                                </div>
                                                 <p class="card-text">
                                                     {% if instance.url %}
                                                         <strong>URL:</strong> <a href="{{ instance.url }}" target="_blank" class="url-link">{{ instance.url }}</a>
@@ -1344,6 +1541,33 @@ HTML_TEMPLATE = """
             </div>
         </div>
     </div>
+    
+    <!-- Edit Display Name Modal -->
+    <div class="modal fade" id="editNameModal" tabindex="-1" aria-labelledby="editNameModalLabel" aria-hidden="true">
+        <div class="modal-dialog">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editNameModalLabel">Edit Display Name</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <form id="editNameForm" action="" method="post">
+                    <div class="modal-body">
+                        <div class="mb-3">
+                            <label for="display_name_edit" class="form-label">Display Name</label>
+                            <input type="text" class="form-control" id="display_name_edit" name="display_name" required>
+                        </div>
+                        <div class="mb-3">
+                            <small class="text-muted">Instance ID: <span id="modalInstanceId"></span></small>
+                        </div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save changes</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
 
     <div class="toast-container"></div>
 
@@ -1380,6 +1604,15 @@ HTML_TEMPLATE = """
                 .catch(error => console.error('Error refreshing data:', error));
         }
         
+        // Edit display name functionality
+        function showEditNameModal(instanceId, currentName) {
+            const modal = new bootstrap.Modal(document.getElementById('editNameModal'));
+            document.getElementById('modalInstanceId').textContent = instanceId;
+            document.getElementById('display_name_edit').value = currentName;
+            document.getElementById('editNameForm').action = `/update_display_name/${instanceId}`;
+            modal.show();
+        }
+        
         // Refresh every 5 seconds
         setInterval(refreshData, 5000);
         
@@ -1392,12 +1625,19 @@ HTML_TEMPLATE = """
 </body>
 </html>
 """
+
 # Handle graceful shutdown
 @atexit.register
 def shutdown_scheduler():
     if scheduler.running:
         scheduler.shutdown()
         print("Scheduler shut down successfully")
+
+# Start the scheduler
+scheduler.start()
+
+# Load configuration from file on startup
+load_configuration()
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
