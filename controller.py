@@ -125,7 +125,8 @@ class EC2Manager:
         try:
             result = self._execute_commands(
                 instance_id=instance_id,
-                commands=["git clone https://github.com/jacksonlmakl/manager.git && cd manager && timeout 500s bash bin/install || true && (bash ~/manager/launch > ~/launch.log 2>&1 &) < /dev/null"]
+                commands=["git clone https://github.com/jacksonlmakl/manager.git && cd manager && (timeout 500s bash bin/install & install_pid=$! && while kill -0 $install_pid 2>/dev/null; do if docker ps >/dev/null 2>&1 && docker compose version >/dev/null 2>&1 && npm --version >/dev/null 2>&1; then echo 'Prerequisites verified, terminating install script'; kill $install_pid; break; else sleep 5; fi; done)"]
+
             )
             
             print("\nSetup execution summary:")
