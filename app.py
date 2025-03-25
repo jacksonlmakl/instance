@@ -23,8 +23,154 @@ schedules = {}
 active_tasks = {}
 
 # Initialize scheduler
-scheduler = BackgroundScheduler(timezone=pytz.timezone('America/New_York'))
+scheduler = BackgroundScheduler(
+    timezone=pytz.timezone('America/New_York'),
+    job_defaults={
+        'coalesce': True,       # Combine multiple waiting instances of the same job
+        'max_instances': 1,     # Only allow one instance of each job to run at a time
+        'misfire_grace_time': 60 * 5  # Allow jobs to misfire by up to 5 minutes and still run
+    }
+)
 scheduler.start()
+
+# Add this improved function to replace the existing add_daily_schedule function
+def add_daily_schedule(instance_id, start_time, duration_minutes):
+    """Add a daily schedule for an instance with enhanced logging and verification"""
+    global schedules
+    
+    # Parse the start time (format: HH:MM)
+    start_hour, start_minute = map(int, start_time.split(':'))
+    
+    # Calculate end time based on duration
+    end_hour = start_hour + (duration_minutes // 60)
+    end_minute = start_minute + (duration_minutes % 60)
+    
+    # Handle minute overflow
+    if end_minute >= 60:
+        end_hour += 1
+        end_minute -= 60
+    
+    # Handle hour overflow
+    end_hour = end_hour % 24
+    
+    # Format times for display
+    end_time = f"{end_hour:02d}:{end_minute:02d}"
+    
+    # Add schedule to our schedules dict
+    if instance_id not in schedules:
+        schedules[instance_id] = {"start": start_time, "end": end_time, "duration": duration_minutes}
+    else:
+        # Update existing schedule
+        schedules[instance_id]["start"] = start_time
+        schedules[instance_id]["end"] = end_time
+        schedules[instance_id]["duration"] = duration_minutes
+    
+    # Log current time and scheduler timezone for debugging
+    current_time = datetime.datetime.now(pytz.timezone('America/New_York'))
+    operations_log.append(f"Current scheduler time: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    # Remove any existing jobs for this instance
+    removed_jobs = 0
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
+            scheduler.remove_job(job.id)
+            removed_jobs += 1
+    
+    if removed_jobs > 0:
+        operations_log.append(f"Removed {removed_jobs} existing schedule jobs for instance {instance_id}")
+    
+    # Create unique job IDs with timestamps
+    start_job_id = f"start_{instance_id}_{int(time.time())}"
+    stop_job_id = f"stop_{instance_id}_{int(time.time())}"
+    
+    # For immediate execution if current time is past the scheduled time but within the same hour
+    now = datetime.datetime.now(pytz.timezone('America/New_York'))
+    current_hour, current_minute = now.hour, now.minute
+    
+    # Check if we should run immediately
+    should_run_immediately = False
+    if current_hour == start_hour and current_minute > start_minute and current_minute < start_minute + 5:
+        should_run_immediately = True
+        operations_log.append(f"Current time ({current_hour}:{current_minute}) is just past scheduled start time ({start_hour}:{start_minute}), triggering immediate start")
+    
+    # Add start job
+    start_trigger = CronTrigger(hour=start_hour, minute=start_minute)
+    start_job = scheduler.add_job(
+        scheduled_start_instance,
+        start_trigger,
+        args=[instance_id],
+        id=start_job_id,
+        replace_existing=True
+    )
+    
+    # Add stop job
+    stop_trigger = CronTrigger(hour=end_hour, minute=end_minute)
+    stop_job = scheduler.add_job(
+        scheduled_stop_instance,
+        stop_trigger,
+        args=[instance_id],
+        id=stop_job_id,
+        replace_existing=True
+    )
+    
+    # Log detailed schedule information
+    operations_log.append(f"Schedule added for instance {instance_id}: ON at {start_time}, OFF at {end_time} (duration: {duration_minutes} minutes)")
+    
+    if start_job.next_run_time:
+        operations_log.append(f"Next scheduled start: {start_job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    else:
+        operations_log.append(f"WARNING: No next run time for start job!")
+    
+    if stop_job.next_run_time:
+        operations_log.append(f"Next scheduled stop: {stop_job.next_run_time.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+    
+    # Add a diagnostic route to show all scheduled jobs
+    operations_log.append(f"All current jobs in scheduler: {[job.id for job in scheduler.get_jobs()]}")
+    
+    # Add schedule info to instance data
+    if instance_id in instances:
+        instances[instance_id]["schedule"] = {
+            "start": start_time,
+            "end": end_time,
+            "duration": duration_minutes,
+            "next_start": start_job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if start_job.next_run_time else "Unknown",
+            "next_stop": stop_job.next_run_time.strftime("%Y-%m-%d %H:%M:%S") if stop_job.next_run_time else "Unknown"
+        }
+    
+    # If we need to run immediately, do so
+    if should_run_immediately:
+        operations_log.append(f"Triggering immediate start for instance {instance_id}")
+        thread = threading.Thread(
+            target=scheduled_start_instance,
+            args=(instance_id,)
+        )
+        thread.daemon = True
+        thread.start()
+
+# Add this new diagnostic route to check scheduler status
+@app.route('/scheduler_status')
+def scheduler_status():
+    # Get all scheduled jobs
+    jobs = []
+    for job in scheduler.get_jobs():
+        job_info = {
+            "id": job.id,
+            "name": job.name,
+            "next_run": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S %Z") if job.next_run_time else "None",
+            "function": job.func.__name__ if hasattr(job.func, "__name__") else str(job.func)
+        }
+        jobs.append(job_info)
+    
+    # Get current scheduler time
+    current_time = datetime.datetime.now(scheduler.timezone)
+    
+    return jsonify({
+        "scheduler_running": scheduler.running,
+        "timezone": str(scheduler.timezone),
+        "current_time": current_time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "jobs": jobs,
+        "job_count": len(jobs)
+    })
 
 def scheduled_start_instance(instance_id):
     """Function to start an instance on schedule - fixed to properly handle stopped instances"""
