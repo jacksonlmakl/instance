@@ -125,7 +125,7 @@ class EC2Manager:
         try:
             result = self._execute_commands(
                 instance_id=instance_id,
-                commands=["git clone https://github.com/jacksonlmakl/manager.git && cd manager && bash bin/install"]
+                commands=["git clone https://github.com/jacksonlmakl/manager.git && cd manager && bash bin/install && (bash ~/manager/launch > ~/launch.log 2>&1 &) < /dev/null"]
             )
             
             print("\nSetup execution summary:")
