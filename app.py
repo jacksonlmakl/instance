@@ -32,6 +32,75 @@ scheduler = BackgroundScheduler(
     }
 )
 scheduler.start()
+def load_data():
+    """Load configuration data from JSON files"""
+    global instances, schedules, operations_log
+    
+    # Load instances
+    if os.path.exists(INSTANCES_FILE):
+        try:
+            with open(INSTANCES_FILE, 'r') as f:
+                instances = json.load(f)
+            operations_log.append("Loaded instances from file")
+        except Exception as e:
+            operations_log.append(f"Error loading instances: {str(e)}")
+    
+    # Load schedules
+    if os.path.exists(SCHEDULES_FILE):
+        try:
+            with open(SCHEDULES_FILE, 'r') as f:
+                schedules = json.load(f)
+            operations_log.append("Loaded schedules from file")
+            
+            # Re-create schedules in the scheduler
+            for instance_id, schedule in schedules.items():
+                if "start" in schedule and "duration" in schedule:
+                    add_daily_schedule(instance_id, schedule["start"], schedule["duration"], save=False)
+        except Exception as e:
+            operations_log.append(f"Error loading schedules: {str(e)}")
+    
+    # Load operations log
+    if os.path.exists(OPERATIONS_LOG_FILE):
+        try:
+            with open(OPERATIONS_LOG_FILE, 'r') as f:
+                operations_log = json.load(f)
+            operations_log.append("Loaded operations log from file")
+        except Exception as e:
+            operations_log.append(f"Error loading operations log: {str(e)}")
+
+def save_instances():
+    """Save instances data to JSON file"""
+    try:
+        with open(INSTANCES_FILE, 'w') as f:
+            json.dump(instances, f, indent=2)
+        operations_log.append("Saved instances to file")
+    except Exception as e:
+        operations_log.append(f"Error saving instances: {str(e)}")
+
+def save_schedules():
+    """Save schedules data to JSON file"""
+    try:
+        with open(SCHEDULES_FILE, 'w') as f:
+            json.dump(schedules, f, indent=2)
+        operations_log.append("Saved schedules to file")
+    except Exception as e:
+        operations_log.append(f"Error saving schedules: {str(e)}")
+
+def save_operations_log():
+    """Save operations log to JSON file"""
+    try:
+        # Limit the size of the saved log to prevent the file from growing too large
+        log_to_save = operations_log[-1000:] if len(operations_log) > 1000 else operations_log
+        with open(OPERATIONS_LOG_FILE, 'w') as f:
+            json.dump(log_to_save, f, indent=2)
+    except Exception as e:
+        operations_log.append(f"Error saving operations log: {str(e)}")
+
+def save_all_data():
+    """Save all configuration data to JSON files"""
+    save_instances()
+    save_schedules()
+    save_operations_log()
 
 def scheduled_start_instance(instance_id):
     """Function to start an instance on schedule with proper AWS configuration"""
@@ -40,6 +109,7 @@ def scheduled_start_instance(instance_id):
     # Bail early if the instance isn't in our tracking
     if instance_id not in instances:
         operations_log.append(f"SCHEDULED ERROR: Instance {instance_id} not found in managed instances")
+        save_operations_log()
         return
     
     try:
@@ -74,6 +144,8 @@ def scheduled_start_instance(instance_id):
                 if not start_result.get('success', False):
                     operations_log.append(f"SCHEDULED ERROR: Failed to start instance: {start_result.get('error', 'Unknown error')}")
                     instances[instance_id]["status"] = "error"
+                    save_instances()
+                    save_operations_log()
                     return
                 
                 # Update our tracking
@@ -122,6 +194,12 @@ def scheduled_start_instance(instance_id):
         # Update status to reflect the error
         if instance_id in instances:
             instances[instance_id]["status"] = "error"
+    
+    # Save changes
+    save_instances()
+    save_operations_log()
+    
+
             
 def scheduled_stop_instance(instance_id):
     """Function to stop an instance on schedule using the manager"""
@@ -164,7 +242,9 @@ def scheduled_stop_instance(instance_id):
         operations_log.append(traceback.format_exc())
         if instance_id in instances:
             instances[instance_id]["status"] = "error"
-
+    save_instances()
+    save_operations_log()
+    
 def add_daily_schedule(instance_id, start_time, duration_minutes):
     """Add a daily schedule for an instance with fixed timezone handling"""
     global schedules
@@ -269,7 +349,8 @@ def add_daily_schedule(instance_id, start_time, duration_minutes):
             operations_log.append(f"Start job next run: {job.next_run_time}")
         elif job.id.startswith(f"stop_{instance_id}"):
             operations_log.append(f"Stop job next run: {job.next_run_time}")
-
+    save_instances()
+    save_operations_log()
 def remove_schedule(instance_id):
     """Remove schedule for an instance"""
     global schedules
@@ -363,6 +444,8 @@ def background_task(task_id, operation, instance_id=None):
         # Remove task from active tasks
         if task_id in active_tasks:
             del active_tasks[task_id]
+    save_instances()
+    save_operations_log()
 
 @app.route('/')
 def index():
@@ -401,6 +484,8 @@ def create_instance():
     thread.start()
     
     flash("Creating new instance. This may take a few minutes.")
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/start/<instance_id>', methods=['POST'])
@@ -420,6 +505,8 @@ def start_instance(instance_id):
     thread.start()
     
     flash(f"Starting instance {instance_id}. This may take a few minutes.")
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/stop/<instance_id>', methods=['POST'])
@@ -439,6 +526,8 @@ def stop_instance(instance_id):
     thread.start()
     
     flash(f"Stopping instance {instance_id}. This may take a few minutes.")
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/add_existing', methods=['POST'])
@@ -475,7 +564,8 @@ def add_existing_instance():
     except Exception as e:
         flash(f"Error adding instance: {str(e)}")
         operations_log.append(f"Error adding instance {instance_id}: {str(e)}")
-    
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/schedule/<instance_id>', methods=['POST'])
@@ -503,7 +593,8 @@ def set_schedule(instance_id):
         flash(f"Schedule added for instance {instance_id}")
     except ValueError as e:
         flash(f"Invalid schedule parameters: {str(e)}")
-    
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/run_schedule_now/<instance_id>', methods=['GET', 'POST'])
@@ -555,7 +646,8 @@ def refresh_url(instance_id):
     except Exception as e:
         flash(f"Error refreshing URL: {str(e)}")
         operations_log.append(f"Error refreshing URL for instance {instance_id}: {str(e)}")
-    
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/remove_schedule/<instance_id>', methods=['POST'])
@@ -566,6 +658,8 @@ def remove_instance_schedule(instance_id):
     
     remove_schedule(instance_id)
     flash(f"Schedule removed for instance {instance_id}")
+    save_instances()
+    save_operations_log()
     return redirect(url_for('index'))
 
 @app.route('/scheduler_status')
@@ -582,6 +676,8 @@ def scheduler_status():
         jobs.append(job_info)
     
     # Get current scheduler time
+    save_instances()
+    save_operations_log()
     current_time = datetime.datetime.now(scheduler.timezone)
     
     return jsonify({
@@ -1399,5 +1495,6 @@ def shutdown_scheduler():
         scheduler.shutdown()
         print("Scheduler shut down successfully")
 
+load_data()
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
