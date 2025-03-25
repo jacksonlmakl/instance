@@ -317,71 +317,7 @@ def scheduled_stop_instance(instance_id):
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to stop instance {instance_id}: {str(e)}")
 
-def add_daily_schedule(instance_id, start_time, duration_minutes):
-    """Add a daily schedule for an instance"""
-    global schedules
-    
-    # Parse the start time (format: HH:MM)
-    start_hour, start_minute = map(int, start_time.split(':'))
-    
-    # Calculate end time based on duration
-    end_hour = start_hour + (duration_minutes // 60)
-    end_minute = start_minute + (duration_minutes % 60)
-    
-    # Handle minute overflow
-    if end_minute >= 60:
-        end_hour += 1
-        end_minute -= 60
-    
-    # Handle hour overflow
-    end_hour = end_hour % 24
-    
-    # Format times for display
-    end_time = f"{end_hour:02d}:{end_minute:02d}"
-    
-    # Add schedule to our schedules dict
-    if instance_id not in schedules:
-        schedules[instance_id] = {"start": start_time, "end": end_time, "duration": duration_minutes}
-    else:
-        # Update existing schedule
-        schedules[instance_id]["start"] = start_time
-        schedules[instance_id]["end"] = end_time
-        schedules[instance_id]["duration"] = duration_minutes
-    
-    # Remove any existing jobs for this instance
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
-            scheduler.remove_job(job.id)
-    
-    # Add start job
-    start_job_id = f"start_{instance_id}_{int(time.time())}"
-    scheduler.add_job(
-        scheduled_start_instance,
-        CronTrigger(hour=start_hour, minute=start_minute),
-        args=[instance_id],
-        id=start_job_id,
-        replace_existing=True
-    )
-    
-    # Add stop job
-    stop_job_id = f"stop_{instance_id}_{int(time.time())}"
-    scheduler.add_job(
-        scheduled_stop_instance,
-        CronTrigger(hour=end_hour, minute=end_minute),
-        args=[instance_id],
-        id=stop_job_id,
-        replace_existing=True
-    )
-    
-    operations_log.append(f"Schedule added for instance {instance_id}: ON at {start_time}, OFF at {end_time} (duration: {duration_minutes} minutes)")
-    
-    # Add schedule info to instance data
-    if instance_id in instances:
-        instances[instance_id]["schedule"] = {
-            "start": start_time,
-            "end": end_time,
-            "duration": duration_minutes
-        }
+
 
 def remove_schedule(instance_id):
     """Remove schedule for an instance"""
