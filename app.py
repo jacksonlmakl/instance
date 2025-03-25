@@ -33,158 +33,6 @@ scheduler = BackgroundScheduler(
 )
 scheduler.start()
 
-# Add this improved function to replace the existing add_daily_schedule function
-def add_daily_schedule(instance_id, start_time, duration_minutes):
-    """Add a daily schedule for an instance with fixed timezone handling"""
-    global schedules
-    
-    operations_log.append(f"Adding schedule with correct timezone handling...")
-    
-    # Parse the start time (format: HH:MM)
-    start_hour, start_minute = map(int, start_time.split(':'))
-    
-    # Calculate end time based on duration
-    end_hour = start_hour + (duration_minutes // 60)
-    end_minute = start_minute + (duration_minutes % 60)
-    
-    # Handle minute overflow
-    if end_minute >= 60:
-        end_hour += 1
-        end_minute -= 60
-    
-    # Handle hour overflow
-    end_hour = end_hour % 24
-    
-    # Format times for display
-    end_time = f"{end_hour:02d}:{end_minute:02d}"
-    
-    # Add schedule to our schedules dict
-    if instance_id not in schedules:
-        schedules[instance_id] = {"start": start_time, "end": end_time, "duration": duration_minutes}
-    else:
-        # Update existing schedule
-        schedules[instance_id]["start"] = start_time
-        schedules[instance_id]["end"] = end_time
-        schedules[instance_id]["duration"] = duration_minutes
-    
-    # Remove any existing jobs for this instance
-    for job in scheduler.get_jobs():
-        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
-            scheduler.remove_job(job.id)
-    
-    # Get current local time for comparison
-    now = datetime.datetime.now()
-    operations_log.append(f"Current local time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-    
-    # Check if we need to run today or if the time has already passed
-    current_hour, current_minute = now.hour, now.minute
-    time_has_passed = (current_hour > start_hour) or (current_hour == start_hour and current_minute >= start_minute)
-    run_immediately = (current_hour == start_hour and current_minute >= start_minute and current_minute < start_minute + 5)
-    
-    # Log the decision
-    if time_has_passed:
-        operations_log.append(f"Scheduled time {start_hour}:{start_minute} has already passed for today")
-    if run_immediately:
-        operations_log.append(f"Will run job immediately since we're within 5 minutes of the start time")
-    
-    # Set up timestamp for immediate run if needed
-    timestamp = ""
-    if run_immediately:
-        timestamp = f"{int(time.time())}"
-    
-    # Create job IDs with timestamp
-    start_job_id = f"start_{instance_id}_{int(time.time())}"
-    stop_job_id = f"stop_{instance_id}_{int(time.time())}"
-    
-    # Add start job using explicit hour/minute
-    scheduler.add_job(
-        scheduled_start_instance,
-        'cron',
-        hour=start_hour,
-        minute=start_minute,
-        args=[instance_id],
-        id=start_job_id
-    )
-    
-    # Add stop job using explicit hour/minute
-    scheduler.add_job(
-        scheduled_stop_instance,
-        'cron',
-        hour=end_hour,
-        minute=end_minute, 
-        args=[instance_id],
-        id=stop_job_id
-    )
-    
-    operations_log.append(f"Schedule added for instance {instance_id}: ON at {start_time}, OFF at {end_time} (duration: {duration_minutes} minutes)")
-    
-    # Add schedule info to instance data
-    if instance_id in instances:
-        instances[instance_id]["schedule"] = {
-            "start": start_time,
-            "end": end_time,
-            "duration": duration_minutes
-        }
-    
-    # If we need to run immediately, do it now
-    if run_immediately:
-        operations_log.append(f"Time is {current_hour}:{current_minute}, triggering immediate start for instance {instance_id}")
-        scheduled_start_instance(instance_id)
-        
-    # Get all jobs for debugging
-    all_jobs = scheduler.get_jobs()
-    for job in all_jobs:
-        if job.id.startswith(f"start_{instance_id}"):
-            operations_log.append(f"Start job next run: {job.next_run_time}")
-        elif job.id.startswith(f"stop_{instance_id}"):
-            operations_log.append(f"Stop job next run: {job.next_run_time}")
-
-# Add an immediate trigger function that runs the schedule manually for today
-@app.route('/run_schedule_now/<instance_id>', methods=['GET', 'POST'])
-def run_schedule_now(instance_id):
-    """Immediately execute a scheduled job for an instance"""
-    if instance_id not in instances:
-        flash(f"Instance {instance_id} not found")
-        return redirect(url_for('index'))
-        
-    operations_log.append(f"MANUAL EXECUTION: Running scheduled start for instance {instance_id} immediately")
-    
-    # Run the job directly
-    try:
-        scheduled_start_instance(instance_id)
-        flash(f"Scheduled start job executed immediately for instance {instance_id}")
-    except Exception as e:
-        flash(f"Error running scheduled start: {str(e)}")
-        operations_log.append(f"Error in manual execution: {str(e)}")
-        operations_log.append(traceback.format_exc())
-    
-    return redirect(url_for('index'))
-    
-# Add this new diagnostic route to check scheduler status
-@app.route('/scheduler_status')
-def scheduler_status():
-    # Get all scheduled jobs
-    jobs = []
-    for job in scheduler.get_jobs():
-        job_info = {
-            "id": job.id,
-            "name": job.name,
-            "next_run": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S %Z") if job.next_run_time else "None",
-            "function": job.func.__name__ if hasattr(job.func, "__name__") else str(job.func)
-        }
-        jobs.append(job_info)
-    
-    # Get current scheduler time
-    current_time = datetime.datetime.now(scheduler.timezone)
-    
-    return jsonify({
-        "scheduler_running": scheduler.running,
-        "timezone": str(scheduler.timezone),
-        "current_time": current_time.strftime("%Y-%m-%d %H:%M:%S %Z"),
-        "jobs": jobs,
-        "job_count": len(jobs)
-    })
-
 def scheduled_start_instance(instance_id):
     """Function to start an instance on schedule - fixed to properly handle stopped instances"""
     operations_log.append(f"SCHEDULED: Attempting to start instance {instance_id}")
@@ -330,7 +178,110 @@ def scheduled_stop_instance(instance_id):
     except Exception as e:
         operations_log.append(f"SCHEDULED ERROR: Failed to stop instance {instance_id}: {str(e)}")
 
-
+def add_daily_schedule(instance_id, start_time, duration_minutes):
+    """Add a daily schedule for an instance with fixed timezone handling"""
+    global schedules
+    
+    operations_log.append(f"Adding schedule with correct timezone handling...")
+    
+    # Parse the start time (format: HH:MM)
+    start_hour, start_minute = map(int, start_time.split(':'))
+    
+    # Calculate end time based on duration
+    end_hour = start_hour + (duration_minutes // 60)
+    end_minute = start_minute + (duration_minutes % 60)
+    
+    # Handle minute overflow
+    if end_minute >= 60:
+        end_hour += 1
+        end_minute -= 60
+    
+    # Handle hour overflow
+    end_hour = end_hour % 24
+    
+    # Format times for display
+    end_time = f"{end_hour:02d}:{end_minute:02d}"
+    
+    # Add schedule to our schedules dict
+    if instance_id not in schedules:
+        schedules[instance_id] = {"start": start_time, "end": end_time, "duration": duration_minutes}
+    else:
+        # Update existing schedule
+        schedules[instance_id]["start"] = start_time
+        schedules[instance_id]["end"] = end_time
+        schedules[instance_id]["duration"] = duration_minutes
+    
+    # Remove any existing jobs for this instance
+    for job in scheduler.get_jobs():
+        if job.id.startswith(f"start_{instance_id}_") or job.id.startswith(f"stop_{instance_id}_"):
+            scheduler.remove_job(job.id)
+    
+    # Get current local time for comparison
+    now = datetime.datetime.now()
+    operations_log.append(f"Current local time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+    
+    # Check if we need to run today or if the time has already passed
+    current_hour, current_minute = now.hour, now.minute
+    time_has_passed = (current_hour > start_hour) or (current_hour == start_hour and current_minute >= start_minute)
+    run_immediately = (current_hour == start_hour and current_minute >= start_minute and current_minute < start_minute + 5)
+    
+    # Log the decision
+    if time_has_passed:
+        operations_log.append(f"Scheduled time {start_hour}:{start_minute} has already passed for today")
+    if run_immediately:
+        operations_log.append(f"Will run job immediately since we're within 5 minutes of the start time")
+    
+    # Set up timestamp for immediate run if needed
+    timestamp = ""
+    if run_immediately:
+        timestamp = f"{int(time.time())}"
+    
+    # Create job IDs with timestamp
+    start_job_id = f"start_{instance_id}_{int(time.time())}"
+    stop_job_id = f"stop_{instance_id}_{int(time.time())}"
+    
+    # Add start job using explicit hour/minute
+    scheduler.add_job(
+        scheduled_start_instance,
+        'cron',
+        hour=start_hour,
+        minute=start_minute,
+        args=[instance_id],
+        id=start_job_id
+    )
+    
+    # Add stop job using explicit hour/minute
+    scheduler.add_job(
+        scheduled_stop_instance,
+        'cron',
+        hour=end_hour,
+        minute=end_minute, 
+        args=[instance_id],
+        id=stop_job_id
+    )
+    
+    operations_log.append(f"Schedule added for instance {instance_id}: ON at {start_time}, OFF at {end_time} (duration: {duration_minutes} minutes)")
+    
+    # Add schedule info to instance data
+    if instance_id in instances:
+        instances[instance_id]["schedule"] = {
+            "start": start_time,
+            "end": end_time,
+            "duration": duration_minutes
+        }
+    
+    # If we need to run immediately, do it now
+    if run_immediately:
+        operations_log.append(f"Time is {current_hour}:{current_minute}, triggering immediate start for instance {instance_id}")
+        scheduled_start_instance(instance_id)
+        
+    # Get all jobs for debugging
+    all_jobs = scheduler.get_jobs()
+    for job in all_jobs:
+        if job.id.startswith(f"start_{instance_id}"):
+            operations_log.append(f"Start job next run: {job.next_run_time}")
+        elif job.id.startswith(f"stop_{instance_id}"):
+            operations_log.append(f"Stop job next run: {job.next_run_time}")
 
 def remove_schedule(instance_id):
     """Remove schedule for an instance"""
@@ -568,6 +519,26 @@ def set_schedule(instance_id):
     
     return redirect(url_for('index'))
 
+@app.route('/run_schedule_now/<instance_id>', methods=['GET', 'POST'])
+def run_schedule_now(instance_id):
+    """Immediately execute a scheduled job for an instance"""
+    if instance_id not in instances:
+        flash(f"Instance {instance_id} not found")
+        return redirect(url_for('index'))
+        
+    operations_log.append(f"MANUAL EXECUTION: Running scheduled start for instance {instance_id} immediately")
+    
+    # Run the job directly
+    try:
+        scheduled_start_instance(instance_id)
+        flash(f"Scheduled start job executed immediately for instance {instance_id}")
+    except Exception as e:
+        flash(f"Error running scheduled start: {str(e)}")
+        operations_log.append(f"Error in manual execution: {str(e)}")
+        operations_log.append(traceback.format_exc())
+    
+    return redirect(url_for('index'))
+
 @app.route('/refresh_url/<instance_id>', methods=['POST'])
 def refresh_url(instance_id):
     """Explicitly refresh the URL of an instance"""
@@ -609,6 +580,30 @@ def remove_instance_schedule(instance_id):
     remove_schedule(instance_id)
     flash(f"Schedule removed for instance {instance_id}")
     return redirect(url_for('index'))
+
+@app.route('/scheduler_status')
+def scheduler_status():
+    # Get all scheduled jobs
+    jobs = []
+    for job in scheduler.get_jobs():
+        job_info = {
+            "id": job.id,
+            "name": job.name,
+            "next_run": job.next_run_time.strftime("%Y-%m-%d %H:%M:%S %Z") if job.next_run_time else "None",
+            "function": job.func.__name__ if hasattr(job.func, "__name__") else str(job.func)
+        }
+        jobs.append(job_info)
+    
+    # Get current scheduler time
+    current_time = datetime.datetime.now(scheduler.timezone)
+    
+    return jsonify({
+        "scheduler_running": scheduler.running,
+        "timezone": str(scheduler.timezone),
+        "current_time": current_time.strftime("%Y-%m-%d %H:%M:%S %Z"),
+        "jobs": jobs,
+        "job_count": len(jobs)
+    })
 
 @app.route('/status')
 def status():
@@ -1205,11 +1200,18 @@ HTML_TEMPLATE = """
                                                 ({{ schedule.duration }} mins)
                                             </small>
                                         </div>
-                                        <form action="/remove_schedule/{{ instance_id }}" method="post">
-                                            <button type="submit" class="btn btn-sm btn-outline-danger">
-                                                <i class="fas fa-trash"></i>
-                                            </button>
-                                        </form>
+                                        <div>
+                                            <form action="/run_schedule_now/{{ instance_id }}" method="post" class="d-inline">
+                                                <button type="submit" class="btn btn-sm btn-outline-success me-1">
+                                                    <i class="fas fa-play"></i>
+                                                </button>
+                                            </form>
+                                            <form action="/remove_schedule/{{ instance_id }}" method="post" class="d-inline">
+                                                <button type="submit" class="btn btn-sm btn-outline-danger">
+                                                    <i class="fas fa-trash"></i>
+                                                </button>
+                                            </form>
+                                        </div>
                                     </li>
                                 {% endfor %}
                                 </ul>
@@ -1220,24 +1222,7 @@ HTML_TEMPLATE = """
                     </div>
                 </div>
             </div>
-            {% if instance.schedule %}
-<div class="schedule-info mb-2">
-    <span class="schedule-badge">
-        <i class="fas fa-clock me-1"></i> 
-        On: {{ instance.schedule.start }} | Off: {{ instance.schedule.end }}
-    </span>
-    <form action="/remove_schedule/{{ instance_id }}" method="post" class="d-inline">
-        <button type="submit" class="btn btn-sm btn-link text-danger p-0 ms-2">
-            <i class="fas fa-times-circle"></i>
-        </button>
-    </form>
-    <form action="/run_schedule_now/{{ instance_id }}" method="post" class="d-inline">
-        <button type="submit" class="btn btn-sm btn-link text-success p-0 ms-2">
-            <i class="fas fa-play-circle"></i> Run Now
-        </button>
-    </form>
-</div>
-{% endif %}
+            
             <div class="col-md-8">
                 <div class="card">
                     <div class="card-header d-flex justify-content-between align-items-center">
@@ -1281,6 +1266,11 @@ HTML_TEMPLATE = """
                                                     <form action="/remove_schedule/{{ instance_id }}" method="post" class="d-inline">
                                                         <button type="submit" class="btn btn-sm btn-link text-danger p-0 ms-2">
                                                             <i class="fas fa-times-circle"></i>
+                                                        </button>
+                                                    </form>
+                                                    <form action="/run_schedule_now/{{ instance_id }}" method="post" class="d-inline">
+                                                        <button type="submit" class="btn btn-sm btn-link text-success p-0 ms-2">
+                                                            <i class="fas fa-play-circle"></i> Run Now
                                                         </button>
                                                     </form>
                                                 </div>
