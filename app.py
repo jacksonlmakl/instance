@@ -779,8 +779,8 @@ HTML_TEMPLATE = """
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
-            --primary: #4F46E5;
-            --primary-dark: #4338CA;
+            --primary: #2c9795;
+            --primary-dark: #043b3d;
             --primary-light: #EEF2FF;
             --secondary: #64748B;
             --success: #10B981;
@@ -861,7 +861,7 @@ HTML_TEMPLATE = """
         }
         
         .btn-primary:hover {
-            background: linear-gradient(135deg, #4338CA, #3730A3);
+            background: linear-gradient(135deg, #043b3d, #3730A3);
             border-color: #3730A3;
             transform: translateY(-1px);
             box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2);
@@ -1156,7 +1156,7 @@ HTML_TEMPLATE = """
         }
         
         .form-check-input:checked[type=checkbox] {
-            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='%234F46E5' d='M14.293 5.293a1 1 0 0 0-1.414 0L7 11.586 4.707 9.293a1 1 0 0 0-1.414 1.414l3 3a1 1 0 0 0 1.414 0l7-7a1 1 0 0 0 0-1.414z'/%3e%3c/svg%3e");
+            background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3e%3cpath fill='%232c9795' d='M14.293 5.293a1 1 0 0 0-1.414 0L7 11.586 4.707 9.293a1 1 0 0 0-1.414 1.414l3 3a1 1 0 0 0 1.414 0l7-7a1 1 0 0 0 0-1.414z'/%3e%3c/svg%3e");
         }
         
         .form-check-label {
