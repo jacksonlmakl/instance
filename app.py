@@ -779,8 +779,8 @@ HTML_TEMPLATE = """
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         :root {
-            --primary: #2b9594;
-            --primary-dark: #277F7F;
+            --primary: #3EB5B5;
+            --primary-dark: #2b9594;
             --primary-light: #EEF2FF;
             --secondary: #64748B;
             --success: #10B981;
